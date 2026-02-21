@@ -1,0 +1,48 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "name": "artifact_checksums_valid",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "dataset_manifest_hash_equal",
+      "passed": true,
+      "details": [
+        "cfd6fa8552164f91398c69af53f5340cc5b69103f37206b30d1c2e812ef39afc",
+        "cfd6fa8552164f91398c69af53f5340cc5b69103f37206b30d1c2e812ef39afc"
+      ]
+    },
+    {
+      "name": "metric_deltas_within_tolerance",
+      "passed": true,
+      "details": {
+        "tolerances": {
+          "clone_score_delta_max": 0.03,
+          "gptzero_accuracy_delta_max": 0.05,
+          "surrogate_accuracy_delta_max": 0.05
+        },
+        "metrics": {
+          "baseline": {
+            "clone_score": 0.8611111111111112,
+            "gptzero_accuracy": 0.46153846153846156,
+            "surrogate_accuracy": 0.38461538461538464
+          },
+          "deltas": [
+            {
+              "run_index": 1,
+              "clone_score_delta": 0.0,
+              "gptzero_accuracy_delta": 0.0,
+              "surrogate_accuracy_delta": 0.0
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "manifest_paths": [
+    "/Users/nicks/Downloads/gptone/gptzero-audit/runs/strict-20260221T023218Z/artifacts/m1-r1-20260221T023218Z/run_manifest.json",
+    "/Users/nicks/Downloads/gptone/gptzero-audit/runs/strict-20260221T023218Z/artifacts/m1-r2-20260221T023218Z/run_manifest.json"
+  ]
+}

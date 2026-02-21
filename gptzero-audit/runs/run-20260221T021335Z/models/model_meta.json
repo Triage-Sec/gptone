@@ -1,0 +1,157 @@
+{
+  "classifier": {
+    "model_type": "SVM_RBF",
+    "cv_balanced_accuracy": 0.5282518696581197,
+    "cv_folds": 2
+  },
+  "regressor": {
+    "model_type": "Ridge",
+    "cv_r2": 0.17877865448100322,
+    "cv_folds": 5
+  },
+  "training_samples": 137,
+  "classes": [
+    "ai",
+    "human",
+    "mixed"
+  ],
+  "class_counts": [
+    129,
+    7,
+    1
+  ],
+  "feature_count": 40,
+  "feature_names": [
+    "word_count",
+    "char_count",
+    "avg_word_len",
+    "avg_word_len_std",
+    "sentence_count",
+    "avg_sentence_len_words",
+    "sentence_len_std",
+    "sentence_len_cv",
+    "sentence_len_entropy",
+    "unique_word_ratio",
+    "long_word_ratio",
+    "zipf_coefficient",
+    "windowed_ttr",
+    "hapax_ratio",
+    "comma_density",
+    "semicolon_count",
+    "question_mark_count",
+    "exclamation_count",
+    "ellipsis_count",
+    "quote_count",
+    "contraction_count",
+    "parenthetical_count",
+    "hedging_score",
+    "transition_word_score",
+    "first_person_count",
+    "passive_voice_ratio",
+    "avg_clause_depth",
+    "starts_with_the_ratio",
+    "starts_with_transition_ratio",
+    "repeated_sentence_starts",
+    "all_caps_words",
+    "numeric_token_count",
+    "bigram_repeat_ratio",
+    "trigram_repeat_ratio",
+    "adjacent_sentence_similarity",
+    "pronoun_density",
+    "conjunction_density",
+    "determiner_density",
+    "paragraph_count",
+    "avg_paragraph_len"
+  ],
+  "top_features": [],
+  "api_response_feature_names": [
+    "sent_genprob_mean",
+    "sent_genprob_std",
+    "sent_genprob_min",
+    "sent_genprob_max",
+    "sent_genprob_range",
+    "sent_perplexity_mean",
+    "sent_perplexity_std",
+    "sent_perplexity_min",
+    "sent_perplexity_max",
+    "highlight_ratio",
+    "doc_burstiness",
+    "class_prob_ai",
+    "class_prob_human",
+    "class_prob_mixed"
+  ],
+  "seed": 42,
+  "run_metadata": {
+    "run_id": "run-20260221T021335Z",
+    "seed": 42,
+    "dataset": {
+      "dataset_version": "v1",
+      "manifest_path": "/Users/nicks/Downloads/gptone/gptzero-audit/datasets/v1/manifest.json",
+      "manifest_sha256": "cfd6fa8552164f91398c69af53f5340cc5b69103f37206b30d1c2e812ef39afc",
+      "manifest_contents": {
+        "dataset_version": "v1",
+        "frozen_at_utc": "2026-02-21T01:51:30.858871+00:00",
+        "files": {
+          "probes.jsonl": {
+            "sha256": "91a9021a9e6af8f0fa3eb55902f4be110ec115d0f9e37c3bae0975bd0184fbc2",
+            "record_count": 124
+          },
+          "train_verified.jsonl": {
+            "sha256": "735e01e1222f218b69507a74ac7b894d1857292145c237a67981de43490a9c0b",
+            "record_count": 36
+          },
+          "test_verified.jsonl": {
+            "sha256": "4a5bbb6448cdeaf033f4b3bcc52a4f4a007991824e5a66079cc0b9a21296872f",
+            "record_count": 13
+          }
+        },
+        "counts": {
+          "probes_by_collection": {
+            "attack_train": 101,
+            "synthetic_holdout": 23
+          },
+          "train_verified_by_label": {
+            "human": 18,
+            "ai": 12,
+            "mixed": 6
+          },
+          "test_verified_by_label": {
+            "human": 5,
+            "ai": 5,
+            "mixed": 3
+          }
+        },
+        "provenance_notes": {
+          "train_verified": "Verified-provenance records with ground truth labels.",
+          "test_verified": "Held-out verified-provenance records for independent evaluation.",
+          "probes": "Synthetic attack probes and synthetic holdout samples."
+        }
+      }
+    },
+    "git_commit": "aa360bf2e15f6e49e337400d17384fde9bdffd43",
+    "python_version": "3.14.0 (main, Oct  7 2025, 09:34:52) [Clang 17.0.0 (clang-1700.0.13.3)]",
+    "platform": "macOS-26.2-arm64-arm-64bit-Mach-O",
+    "dependency_versions": {
+      "numpy": "2.4.2",
+      "scikit-learn": "1.8.0",
+      "requests": "2.32.5",
+      "joblib": "1.5.3",
+      "matplotlib": "3.10.8",
+      "modal": "1.3.3"
+    },
+    "api_endpoint": "https://api.gptzero.me/v2/predict/text",
+    "cli_args": {
+      "api_key": "92e2cba8ae2149c4bdfbd0cc39053226",
+      "delay": 0.5,
+      "skip_test": false,
+      "test_only": false,
+      "seed": 42,
+      "run_id": "run-20260221T021335Z",
+      "dataset_version": "v1",
+      "output_dir": "./runs/run-20260221T021335Z",
+      "no_network_cache": true
+    },
+    "started_at_utc": "2026-02-21T02:13:37.088974+00:00"
+  },
+  "trained_at": "2026-02-20T18:16:07.225460"
+}

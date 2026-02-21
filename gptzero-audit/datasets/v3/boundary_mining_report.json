@@ -1,0 +1,443 @@
+{
+  "source_dataset_version": "v2",
+  "target_dataset_version": "v3",
+  "started_from_utc": "2026-02-21T03:40:36.924247+00:00",
+  "config": {
+    "seed": 42,
+    "delay": 0.5,
+    "max_base_samples": 12,
+    "max_mined_samples": 24,
+    "max_steps": 3,
+    "branching_factor": 4,
+    "boundary_low": 0.35,
+    "boundary_high": 0.65
+  },
+  "summary": {
+    "base_samples_selected": 12,
+    "accepted_boundary_samples": 0,
+    "api_calls": 131,
+    "api_words": 16365
+  },
+  "trace": [
+    {
+      "base_sample_id": "style_launch_brief_vs_founder_note_mixed",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5
+    },
+    {
+      "base_sample_id": "train_mixed_5",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "evaluated": 3,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "evaluated": 2,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5
+    },
+    {
+      "base_sample_id": "train_human_3",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "evaluated": 3,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "evaluated": 2,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5
+    },
+    {
+      "base_sample_id": "bound_080pct_human",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "evaluated": 3,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "evaluated": 2,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5
+    },
+    {
+      "base_sample_id": "grad_first_person",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "evaluated": 3,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5
+    },
+    {
+      "base_sample_id": "hmm_HHAA",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "evaluated": 3,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5
+    },
+    {
+      "base_sample_id": "mem_edge_constitution",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_ai",
+          "evaluated": 4,
+          "selected_prob_ai": 0.0,
+          "selected_predicted_class": "human",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_ai",
+          "evaluated": 3,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "human",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "human",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 0.0,
+      "base_predicted_class": "human",
+      "best_prob_ai": 0.0,
+      "best_predicted_class": "human",
+      "best_distance_to_boundary": 0.5
+    },
+    {
+      "base_sample_id": "ppl_medium",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "evaluated": 3,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "evaluated": 2,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5
+    },
+    {
+      "base_sample_id": "style_forecast_vs_local_judgment_ai",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "evaluated": 3,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5
+    },
+    {
+      "base_sample_id": "train_mixed_7",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "evaluated": 3,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "evaluated": 2,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5
+    },
+    {
+      "base_sample_id": "train_human_4",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "evaluated": 3,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "evaluated": 2,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5
+    },
+    {
+      "base_sample_id": "bound_010pct_human",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "evaluated": 4,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "evaluated": 3,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "evaluated": 2,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5
+    }
+  ]
+}

@@ -1,18 +1,24 @@
 """GPTZero API client with full response parsing and logging."""
 
 import os
-import json
 import time
+import random
 import requests
-from datetime import datetime
-from pathlib import Path
 
 
 API_URL = "https://api.gptzero.me/v2/predict/text"
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 class GPTZeroClient:
-    def __init__(self, api_key=None):
+    def __init__(
+        self,
+        api_key=None,
+        max_retries=3,
+        retry_base_delay=1.0,
+        retry_max_delay=8.0,
+        timeout_seconds=30,
+    ):
         self.api_key = api_key or os.environ.get("GPTZERO_API_KEY")
         if not self.api_key:
             raise ValueError("Set GPTZERO_API_KEY or pass api_key=")
@@ -21,8 +27,23 @@ class GPTZeroClient:
             "Content-Type": "application/json",
             "x-api-key": self.api_key,
         }
+        self.max_retries = max(0, int(max_retries))
+        self.retry_base_delay = float(retry_base_delay)
+        self.retry_max_delay = float(retry_max_delay)
+        self.timeout_seconds = float(timeout_seconds)
         self.call_count = 0
         self.total_words = 0
+
+    def _retry_delay_seconds(self, attempt_idx):
+        """
+        Return jittered exponential backoff delay for a retry attempt.
+
+        attempt_idx is zero-based where 0 is the first retry.
+        """
+        raw = self.retry_base_delay * (2 ** attempt_idx)
+        bounded = min(raw, self.retry_max_delay)
+        jitter = random.uniform(0.0, bounded * 0.25)
+        return bounded + jitter
 
     def predict(self, text, delay=0.5):
         """
@@ -35,25 +56,77 @@ class GPTZeroClient:
           sentence-level: generated_prob, perplexity, highlight_sentence_for_ai
         """
         time.sleep(delay)
-        
-        try:
-            resp = requests.post(
-                API_URL,
-                headers=self.headers,
-                json={"document": text},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            raw = resp.json()
-        except requests.exceptions.HTTPError as e:
-            return {"error": str(e), "status": resp.status_code, "body": resp.text}
-        except Exception as e:
-            return {"error": str(e)}
 
+        # Logical query counters (not per retry attempt).
         self.call_count += 1
         self.total_words += len(text.split())
 
-        return self._parse(raw, text)
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = requests.post(
+                    API_URL,
+                    headers=self.headers,
+                    json={"document": text},
+                    timeout=self.timeout_seconds,
+                )
+                status = resp.status_code
+                if status >= 400:
+                    should_retry = (
+                        status in RETRYABLE_STATUS_CODES and attempt < self.max_retries
+                    )
+                    if should_retry:
+                        time.sleep(self._retry_delay_seconds(attempt))
+                        continue
+                    return {
+                        "error": f"HTTP {status}",
+                        "status": status,
+                        "body": resp.text,
+                        "attempts": attempt + 1,
+                    }
+
+                try:
+                    raw = resp.json()
+                except ValueError as e:
+                    return {
+                        "error": f"Invalid JSON response: {e}",
+                        "status": status,
+                        "body": resp.text,
+                        "attempts": attempt + 1,
+                    }
+                return self._parse(raw, text)
+
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                if attempt < self.max_retries:
+                    time.sleep(self._retry_delay_seconds(attempt))
+                    continue
+                return {
+                    "error": str(e),
+                    "status": "network_error",
+                    "attempts": attempt + 1,
+                }
+            except requests.exceptions.RequestException as e:
+                status = e.response.status_code if e.response is not None else None
+                body = e.response.text if e.response is not None else None
+                if (
+                    status in RETRYABLE_STATUS_CODES
+                    and attempt < self.max_retries
+                ):
+                    time.sleep(self._retry_delay_seconds(attempt))
+                    continue
+                return {
+                    "error": str(e),
+                    "status": status,
+                    "body": body,
+                    "attempts": attempt + 1,
+                }
+            except Exception as e:
+                return {"error": str(e), "attempts": attempt + 1}
+
+        return {
+            "error": "Exhausted retries without response",
+            "status": "retry_exhausted",
+            "attempts": self.max_retries + 1,
+        }
 
     def _parse(self, raw, text):
         docs = raw.get("documents", [{}])

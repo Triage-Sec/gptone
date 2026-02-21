@@ -61,6 +61,7 @@ For each run:
 - `models/surrogate_regressor.joblib`
 - `models/model_meta.json`
 - `report/gptzero_extraction_report.txt`
+- `artifacts/<run_id>/snapshots/*.json|*.joblib|*.txt`
 - `artifacts/<run_id>/run_manifest.json`
 
 Run manifest includes:
@@ -69,7 +70,7 @@ Run manifest includes:
 - dataset manifest hash,
 - git commit hash,
 - Python/platform/dependency versions,
-- SHA256 checksums for each artifact.
+- SHA256 checksums for immutable per-run artifact snapshots.
 
 ## Dataset Versioning
 
@@ -81,6 +82,48 @@ Versioned benchmark data lives in:
 - `datasets/v1/manifest.json`
 
 `datasets/v1/manifest.json` contains checksums and record counts used for integrity checks.
+
+Build the reason-guided augmentation dataset (`v2`) from `v1`:
+
+```bash
+python scripts/build_dataset_v2.py --source-version v1 --target-version v2
+```
+
+Then run the pipeline against `v2`:
+
+```bash
+python main.py \
+  --api-key YOUR_GPTZERO_API_KEY \
+  --seed 42 \
+  --dataset-version v2 \
+  --run-id run-v2-001 \
+  --output-dir .
+```
+
+Mine near-boundary probes and build `v3` from `v2`:
+
+```bash
+python scripts/mine_boundary_probes.py \
+  --source-version v2 \
+  --target-version v3 \
+  --max-base-samples 12 \
+  --max-mined-samples 24 \
+  --max-steps 3 \
+  --branching-factor 4 \
+  --boundary-low 0.35 \
+  --boundary-high 0.65
+```
+
+Run the pipeline on boundary-mined data:
+
+```bash
+python main.py \
+  --api-key YOUR_GPTZERO_API_KEY \
+  --seed 42 \
+  --dataset-version v3 \
+  --run-id run-v3-001 \
+  --output-dir .
+```
 
 ## Reproducibility Verification
 
@@ -119,4 +162,5 @@ Tests cover:
 
 - dataset manifest integrity,
 - run manifest structure/checksum writing,
-- reproducibility verifier pass/fail behavior.
+- reproducibility verifier pass/fail behavior,
+- UI-reason-guided probe taxonomy coverage.

@@ -1,0 +1,130 @@
+{
+  "run_metadata": {
+    "run_id": "v2-r1-20260221T032844Z",
+    "seed": 42,
+    "dataset": {
+      "dataset_version": "v2",
+      "manifest_path": "/Users/nicks/Downloads/gptone/gptzero-audit/datasets/v2/manifest.json",
+      "manifest_sha256": "453b1c7dcc2ba948a9d02d864ccd98099e57b524d7914b260aa816094411f8ec",
+      "manifest_contents": {
+        "dataset_version": "v2",
+        "frozen_at_utc": "2026-02-21T03:28:17.724244+00:00",
+        "base_dataset_version": "v1",
+        "augmentation": {
+          "style_reason_records_added": 24,
+          "style_reason_generator": "src.style_reason_probes.build_style_reason_probe_records",
+          "source": "GPTZero product explanation taxonomy"
+        },
+        "files": {
+          "probes.jsonl": {
+            "sha256": "b4ad069aa51efcf96b9d85a54a7de7b65569e78bcfb4acbbebdb69f420255f3e",
+            "record_count": 148
+          },
+          "train_verified.jsonl": {
+            "sha256": "735e01e1222f218b69507a74ac7b894d1857292145c237a67981de43490a9c0b",
+            "record_count": 36
+          },
+          "test_verified.jsonl": {
+            "sha256": "4a5bbb6448cdeaf033f4b3bcc52a4f4a007991824e5a66079cc0b9a21296872f",
+            "record_count": 13
+          }
+        },
+        "counts": {
+          "probes_by_collection": {
+            "attack_train": 125,
+            "synthetic_holdout": 23
+          },
+          "train_verified_by_label": {
+            "ai": 12,
+            "human": 18,
+            "mixed": 6
+          },
+          "test_verified_by_label": {
+            "ai": 5,
+            "human": 5,
+            "mixed": 3
+          }
+        },
+        "provenance_notes": {
+          "train_verified": "Copied from v1 verified-provenance records.",
+          "test_verified": "Copied from v1 held-out verified-provenance records.",
+          "probes": "v1 synthetic probes plus UI-reason-guided style-axis augmentation."
+        }
+      }
+    },
+    "git_commit": "aa360bf2e15f6e49e337400d17384fde9bdffd43",
+    "python_version": "3.14.0 (main, Oct  7 2025, 09:34:52) [Clang 17.0.0 (clang-1700.0.13.3)]",
+    "platform": "macOS-26.2-arm64-arm-64bit-Mach-O",
+    "dependency_versions": {
+      "numpy": "2.4.2",
+      "scikit-learn": "1.8.0",
+      "requests": "2.32.5",
+      "joblib": "1.5.3",
+      "matplotlib": "3.10.8",
+      "modal": "1.3.3"
+    },
+    "api_endpoint": "https://api.gptzero.me/v2/predict/text",
+    "cli_args": {
+      "api_key": null,
+      "delay": 0.5,
+      "skip_test": false,
+      "test_only": false,
+      "seed": 42,
+      "run_id": "v2-r1-20260221T032844Z",
+      "dataset_version": "v2",
+      "output_dir": "./runs/v2-style-20260221T032844Z",
+      "no_network_cache": true
+    },
+    "started_at_utc": "2026-02-21T03:28:45.480223+00:00"
+  },
+  "artifacts": {
+    "extraction_results": {
+      "path": "/Users/nicks/Downloads/gptone/gptzero-audit/runs/v2-style-20260221T032844Z/artifacts/v2-r1-20260221T032844Z/snapshots/extraction_results.json",
+      "sha256": "85c34243317658ca3e077389cf6b2c89a75216b25bf043e1ad2e8a96b7cfa61b",
+      "size_bytes": 1742266
+    },
+    "test_results": {
+      "path": "/Users/nicks/Downloads/gptone/gptzero-audit/runs/v2-style-20260221T032844Z/artifacts/v2-r1-20260221T032844Z/snapshots/test_results.json",
+      "sha256": "e887111513c961e536d80c03ec2c60f92caa982015d5b0dc08f1e5c00d921f72",
+      "size_bytes": 10593
+    },
+    "model_meta": {
+      "path": "/Users/nicks/Downloads/gptone/gptzero-audit/runs/v2-style-20260221T032844Z/artifacts/v2-r1-20260221T032844Z/snapshots/model_meta.json",
+      "sha256": "b7c1f5b486a7984ff354690f09136bf1b9b809326bb115d1f719a5859e2b00aa",
+      "size_bytes": 5612
+    },
+    "classifier_model": {
+      "path": "/Users/nicks/Downloads/gptone/gptzero-audit/runs/v2-style-20260221T032844Z/artifacts/v2-r1-20260221T032844Z/snapshots/classifier_model.joblib",
+      "sha256": "db66739989f812c0fee5d8d4420deb0b268843ca7d6c33a159c44ae5c78b6d9a",
+      "size_bytes": 3297
+    },
+    "regressor_model": {
+      "path": "/Users/nicks/Downloads/gptone/gptzero-audit/runs/v2-style-20260221T032844Z/artifacts/v2-r1-20260221T032844Z/snapshots/regressor_model.joblib",
+      "sha256": "6ef9e85df9d679fabbec3940d17f9048f375bb38bd08827a19fc93e3ce77aa92",
+      "size_bytes": 2289
+    },
+    "label_encoder": {
+      "path": "/Users/nicks/Downloads/gptone/gptzero-audit/runs/v2-style-20260221T032844Z/artifacts/v2-r1-20260221T032844Z/snapshots/label_encoder.joblib",
+      "sha256": "bba8cabc6b7313162ca865e4cbd877487f2053b923ef83ad3258e7ac393bde08",
+      "size_bytes": 387
+    },
+    "report": {
+      "path": "/Users/nicks/Downloads/gptone/gptzero-audit/runs/v2-style-20260221T032844Z/artifacts/v2-r1-20260221T032844Z/snapshots/report.txt",
+      "sha256": "647cd45e4acef8996ff0edbdf908a215f70300e3ff4ef3b27a26a45176635087",
+      "size_bytes": 12402
+    },
+    "dataset_manifest": {
+      "path": "/Users/nicks/Downloads/gptone/gptzero-audit/runs/v2-style-20260221T032844Z/artifacts/v2-r1-20260221T032844Z/snapshots/dataset_manifest.json",
+      "sha256": "453b1c7dcc2ba948a9d02d864ccd98099e57b524d7914b260aa816094411f8ec",
+      "size_bytes": 1320
+    }
+  },
+  "metrics": {
+    "mode": "full",
+    "clone_score": 0.8888888888888888,
+    "gptzero_api_calls": 197,
+    "gptzero_words": 19231,
+    "skip_test": false
+  },
+  "finished_at_utc": "2026-02-21T03:32:24.200843+00:00"
+}

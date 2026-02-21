@@ -1,0 +1,39 @@
+{
+  "dataset_version": "v1",
+  "frozen_at_utc": "2026-02-21T01:51:30.858871+00:00",
+  "files": {
+    "probes.jsonl": {
+      "sha256": "91a9021a9e6af8f0fa3eb55902f4be110ec115d0f9e37c3bae0975bd0184fbc2",
+      "record_count": 124
+    },
+    "train_verified.jsonl": {
+      "sha256": "735e01e1222f218b69507a74ac7b894d1857292145c237a67981de43490a9c0b",
+      "record_count": 36
+    },
+    "test_verified.jsonl": {
+      "sha256": "4a5bbb6448cdeaf033f4b3bcc52a4f4a007991824e5a66079cc0b9a21296872f",
+      "record_count": 13
+    }
+  },
+  "counts": {
+    "probes_by_collection": {
+      "attack_train": 101,
+      "synthetic_holdout": 23
+    },
+    "train_verified_by_label": {
+      "human": 18,
+      "ai": 12,
+      "mixed": 6
+    },
+    "test_verified_by_label": {
+      "human": 5,
+      "ai": 5,
+      "mixed": 3
+    }
+  },
+  "provenance_notes": {
+    "train_verified": "Verified-provenance records with ground truth labels.",
+    "test_verified": "Held-out verified-provenance records for independent evaluation.",
+    "probes": "Synthetic attack probes and synthetic holdout samples."
+  }
+}

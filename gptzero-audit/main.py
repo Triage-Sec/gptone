@@ -42,6 +42,7 @@ from src.reproducibility import (
     build_run_metadata,
     configure_run_paths,
     set_global_seed,
+    snapshot_artifacts_for_run,
     write_run_manifest,
 )
 
@@ -312,7 +313,7 @@ def step_train(results, seed=DEFAULT_SEED, run_metadata=None):
     print(f"Classes: {list(le.classes_)} (counts: {class_counts.tolist()})")
 
     # Check for minimum class representation
-    min_class_count = min(class_counts)
+    min_class_count = int(min(class_counts))
     if min_class_count < 2:
         print(f"WARNING: Class with only {min_class_count} sample(s). "
               f"Cross-validation may be unreliable for minority classes.")
@@ -337,8 +338,7 @@ def step_train(results, seed=DEFAULT_SEED, run_metadata=None):
         ]),
     }
 
-    k_cls = min(5, min_class_count)
-    k_cls = max(k_cls, 2)
+    k_cls = int(max(min(5, min_class_count), 2))
 
     best_cls_score = 0
     best_cls_name = ""
@@ -378,8 +378,7 @@ def step_train(results, seed=DEFAULT_SEED, run_metadata=None):
         ]),
     }
 
-    k_reg = min(5, len(texts) // 3)
-    k_reg = max(k_reg, 2)
+    k_reg = int(max(min(5, len(texts) // 3), 2))
 
     best_reg_score = -999
     best_reg_name = ""
@@ -412,17 +411,17 @@ def step_train(results, seed=DEFAULT_SEED, run_metadata=None):
         "classifier": {
             "model_type": best_cls_name,
             "cv_balanced_accuracy": float(best_cls_score),
-            "cv_folds": k_cls,
+            "cv_folds": int(k_cls),
         },
         "regressor": {
             "model_type": best_reg_name,
             "cv_r2": float(best_reg_score),
-            "cv_folds": k_reg,
+            "cv_folds": int(k_reg),
         },
-        "training_samples": len(texts),
+        "training_samples": int(len(texts)),
         "classes": list(le.classes_),
-        "class_counts": class_counts.tolist(),
-        "feature_count": len(feat_names),
+        "class_counts": [int(x) for x in class_counts.tolist()],
+        "feature_count": int(len(feat_names)),
         "feature_names": feat_names,
         "top_features": top_features,
         "api_response_feature_names": API_RESPONSE_FEATURE_NAMES,
@@ -1094,10 +1093,14 @@ Examples:
             "label_encoder": MODEL_DIR / "label_encoder.joblib",
             "dataset_manifest": project_root / "datasets" / args.dataset_version / "manifest.json",
         }
+        snapshot_artifact_paths = snapshot_artifacts_for_run(
+            run_dir=run_paths.run_dir,
+            artifact_paths=artifact_paths,
+        )
         write_run_manifest(
             manifest_path=run_paths.manifest_path,
             run_metadata=run_metadata,
-            artifact_paths=artifact_paths,
+            artifact_paths=snapshot_artifact_paths,
             extra_metrics={
                 "mode": "test-only",
                 "clone_score": agreement,
@@ -1154,10 +1157,14 @@ Examples:
         "report": REPORT_DIR / "gptzero_extraction_report.txt",
         "dataset_manifest": project_root / "datasets" / args.dataset_version / "manifest.json",
     }
+    snapshot_artifact_paths = snapshot_artifacts_for_run(
+        run_dir=run_paths.run_dir,
+        artifact_paths=artifact_paths,
+    )
     write_run_manifest(
         manifest_path=run_paths.manifest_path,
         run_metadata=run_metadata,
-        artifact_paths=artifact_paths,
+        artifact_paths=snapshot_artifact_paths,
         extra_metrics={
             "mode": "full",
             "clone_score": agreement,

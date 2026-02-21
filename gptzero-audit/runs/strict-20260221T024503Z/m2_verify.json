@@ -1,0 +1,72 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "name": "artifact_checksums_valid",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "dataset_manifest_hash_equal",
+      "passed": true,
+      "details": [
+        "cfd6fa8552164f91398c69af53f5340cc5b69103f37206b30d1c2e812ef39afc",
+        "cfd6fa8552164f91398c69af53f5340cc5b69103f37206b30d1c2e812ef39afc",
+        "cfd6fa8552164f91398c69af53f5340cc5b69103f37206b30d1c2e812ef39afc",
+        "cfd6fa8552164f91398c69af53f5340cc5b69103f37206b30d1c2e812ef39afc",
+        "cfd6fa8552164f91398c69af53f5340cc5b69103f37206b30d1c2e812ef39afc"
+      ]
+    },
+    {
+      "name": "metric_deltas_within_tolerance",
+      "passed": true,
+      "details": {
+        "tolerances": {
+          "clone_score_delta_max": 0.03,
+          "gptzero_accuracy_delta_max": 0.05,
+          "surrogate_accuracy_delta_max": 0.05
+        },
+        "metrics": {
+          "baseline": {
+            "clone_score": 0.8611111111111112,
+            "gptzero_accuracy": 0.46153846153846156,
+            "surrogate_accuracy": 0.38461538461538464
+          },
+          "deltas": [
+            {
+              "run_index": 1,
+              "clone_score_delta": 0.0,
+              "gptzero_accuracy_delta": 0.0,
+              "surrogate_accuracy_delta": 0.0
+            },
+            {
+              "run_index": 2,
+              "clone_score_delta": 0.02777777777777768,
+              "gptzero_accuracy_delta": 0.0,
+              "surrogate_accuracy_delta": 0.0
+            },
+            {
+              "run_index": 3,
+              "clone_score_delta": 0.0,
+              "gptzero_accuracy_delta": 0.0,
+              "surrogate_accuracy_delta": 0.0
+            },
+            {
+              "run_index": 4,
+              "clone_score_delta": 0.0,
+              "gptzero_accuracy_delta": 0.0,
+              "surrogate_accuracy_delta": 0.0
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "manifest_paths": [
+    "/Users/nicks/Downloads/gptone/gptzero-audit/runs/strict-20260221T024503Z/artifacts/m2-20260221T024503Z-s11/run_manifest.json",
+    "/Users/nicks/Downloads/gptone/gptzero-audit/runs/strict-20260221T024503Z/artifacts/m2-20260221T024503Z-s42/run_manifest.json",
+    "/Users/nicks/Downloads/gptone/gptzero-audit/runs/strict-20260221T024503Z/artifacts/m2-20260221T024503Z-s97/run_manifest.json",
+    "/Users/nicks/Downloads/gptone/gptzero-audit/runs/strict-20260221T024503Z/artifacts/m2-20260221T024503Z-s1337/run_manifest.json",
+    "/Users/nicks/Downloads/gptone/gptzero-audit/runs/strict-20260221T024503Z/artifacts/m2-20260221T024503Z-s2026/run_manifest.json"
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "dataset_version": "v3",
+  "frozen_at_utc": "2026-02-21T03:40:36.925351+00:00",
+  "base_dataset_version": "v2",
+  "augmentation": {
+    "boundary_mined_records_added": 0,
+    "boundary_band": [
+      0.35,
+      0.65
+    ],
+    "max_steps": 3,
+    "branching_factor": 4,
+    "max_base_samples": 12,
+    "seed": 42,
+    "mining_report": "/Users/nicks/Downloads/gptone/gptzero-audit/datasets/v3/boundary_mining_report.json",
+    "mining_report_sha256": "6261ede8f42878d0ef626c0954c78cddc8e729922be092bbcd864568ee37d500"
+  },
+  "files": {
+    "probes.jsonl": {
+      "sha256": "b4ad069aa51efcf96b9d85a54a7de7b65569e78bcfb4acbbebdb69f420255f3e",
+      "record_count": 148
+    },
+    "train_verified.jsonl": {
+      "sha256": "735e01e1222f218b69507a74ac7b894d1857292145c237a67981de43490a9c0b",
+      "record_count": 36
+    },
+    "test_verified.jsonl": {
+      "sha256": "4a5bbb6448cdeaf033f4b3bcc52a4f4a007991824e5a66079cc0b9a21296872f",
+      "record_count": 13
+    }
+  },
+  "counts": {
+    "probes_by_collection": {
+      "attack_train": 125,
+      "synthetic_holdout": 23
+    },
+    "train_verified_by_label": {
+      "ai": 12,
+      "human": 18,
+      "mixed": 6
+    },
+    "test_verified_by_label": {
+      "ai": 5,
+      "human": 5,
+      "mixed": 3
+    }
+  },
+  "provenance_notes": {
+    "train_verified": "Copied from v2 verified-provenance records.",
+    "test_verified": "Copied from v2 held-out verified-provenance records.",
+    "probes": "v2 probes plus active boundary-mined records guided by GPTZero live probabilities."
+  }
+}

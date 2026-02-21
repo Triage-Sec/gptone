@@ -8,6 +8,8 @@ import json
 import os
 import platform
 import random
+import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -187,4 +189,32 @@ def write_run_manifest(
         "finished_at_utc": datetime.now(timezone.utc).isoformat(),
     }
     manifest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def snapshot_artifacts_for_run(
+    *,
+    run_dir: Path,
+    artifact_paths: Mapping[str, Path],
+) -> Dict[str, Path]:
+    """
+    Copy artifacts to an immutable, run-scoped snapshot directory.
+
+    Returns a mapping of artifact key -> snapshot path. Missing source files
+    still get a deterministic destination path to keep manifests comparable.
+    """
+    snapshots_dir = run_dir / "snapshots"
+    snapshots_dir.mkdir(parents=True, exist_ok=True)
+
+    snapped: Dict[str, Path] = {}
+    for key, source_path in artifact_paths.items():
+        source = Path(source_path)
+        safe_key = re.sub(r"[^A-Za-z0-9_.-]", "_", key)
+        suffix = "".join(source.suffixes)
+        target_name = f"{safe_key}{suffix}" if suffix else safe_key
+        target = snapshots_dir / target_name
+        if source.exists():
+            shutil.copy2(source, target)
+        snapped[key] = target
+
+    return snapped
 

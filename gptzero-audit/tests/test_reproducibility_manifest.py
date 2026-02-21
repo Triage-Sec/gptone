@@ -6,6 +6,7 @@ from pathlib import Path
 from src.reproducibility import (
     build_run_metadata,
     configure_run_paths,
+    snapshot_artifacts_for_run,
     write_run_manifest,
 )
 
@@ -62,6 +63,26 @@ class ReproducibilityManifestTest(unittest.TestCase):
             self.assertEqual(manifest["run_metadata"]["run_id"], "run-test")
             self.assertIsNotNone(manifest["artifacts"]["extraction_results"]["sha256"])
             self.assertIsNotNone(manifest["artifacts"]["test_results"]["sha256"])
+
+    def test_snapshot_artifacts_for_run_creates_immutable_copies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            run_paths = configure_run_paths(base, "run-test")
+            source_file = run_paths.data_dir / "test_results.json"
+            source_file.write_text(json.dumps({"agreement_rate": 0.9}), encoding="utf-8")
+
+            snapped = snapshot_artifacts_for_run(
+                run_dir=run_paths.run_dir,
+                artifact_paths={"test_results": source_file},
+            )
+            snapshot_path = snapped["test_results"]
+
+            self.assertTrue(snapshot_path.exists())
+            self.assertEqual(run_paths.run_dir / "snapshots", snapshot_path.parent)
+            self.assertEqual(
+                source_file.read_text(encoding="utf-8"),
+                snapshot_path.read_text(encoding="utf-8"),
+            )
 
 
 if __name__ == "__main__":

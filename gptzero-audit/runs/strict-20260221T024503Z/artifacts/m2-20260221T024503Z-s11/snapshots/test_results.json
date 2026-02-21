@@ -1,0 +1,388 @@
+{
+  "agreement_rate": 0.8611111111111112,
+  "agreement_ci_95": [
+    0.75,
+    0.9722222222222222
+  ],
+  "per_class_agreement": {
+    "ai": 0.9117647058823529,
+    "human": 0.0
+  },
+  "regressor_mae": 0.1421255806284173,
+  "regressor_r2": -0.6186683074030008,
+  "ground_truth_evaluation": {
+    "gptzero_accuracy": 0.46153846153846156,
+    "gptzero_false_positives": 4,
+    "gptzero_false_negatives": 0,
+    "surrogate_accuracy": 0.38461538461538464,
+    "per_class": {},
+    "surrogate_false_positives": 5,
+    "surrogate_false_negatives": 0
+  },
+  "dataset_version": "v1",
+  "total_tests": 36,
+  "matches": 31,
+  "comparisons": [
+    {
+      "sample_id": "test_ai_1",
+      "gptzero_class": "ai",
+      "surrogate_class": "human",
+      "match": false,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.6912068968801728,
+      "prob_error": 0.3087931031198272,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_ai_2",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.9497770019323069,
+      "prob_error": 0.05022299806769315,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_ai_3",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.1406048549237908,
+      "prob_error": 0.14060485492379082,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_ai_4",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.9675952568509195,
+      "prob_error": 0.032404743149080484,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_ai_5",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.6991317045037606,
+      "prob_error": 0.3008682954962394,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_ai_6",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.9700350973150128,
+      "prob_error": 0.029964902684987194,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_ai_7",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.8603390749209862,
+      "prob_error": 0.13966092507901384,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_human_1",
+      "gptzero_class": "ai",
+      "surrogate_class": "human",
+      "match": false,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.30558117943774077,
+      "prob_error": 0.6944188205622592,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_human_2",
+      "gptzero_class": "ai",
+      "surrogate_class": "mixed",
+      "match": false,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.6679598274915235,
+      "prob_error": 0.3320401725084765,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_human_3",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.9850921409858083,
+      "prob_error": 0.014907859014191671,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_human_4",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.107063277804564,
+      "prob_error": 0.10706327780456393,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_human_5",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.1096256353821081,
+      "prob_error": 0.10962563538210812,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_human_6",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.0238176003624568,
+      "prob_error": 0.023817600362456837,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_human_7",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.04220734063811,
+      "prob_error": 0.04220734063811005,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_human_8",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.8689106469711195,
+      "prob_error": 0.13108935302888047,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_human_9",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.0348713209094442,
+      "prob_error": 0.034871320909444226,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_human_10",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.0555512099565731,
+      "prob_error": 0.055551209956573144,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_mixed_1",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.8741663302397582,
+      "prob_error": 0.1258336697602418,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_mixed_2",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.0071125652357715,
+      "prob_error": 0.0071125652357715285,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_mixed_3",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.9906744861680915,
+      "prob_error": 0.009325513831908494,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_mixed_4",
+      "gptzero_class": "human",
+      "surrogate_class": "ai",
+      "match": false,
+      "gptzero_prob": 0.5,
+      "surrogate_prob": 1.0845752349260154,
+      "prob_error": 0.5845752349260154,
+      "gptzero_confidence": "low"
+    },
+    {
+      "sample_id": "test_mixed_5",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.9845736379952513,
+      "prob_error": 0.015426362004748673,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "test_mixed_6",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.9182583311721382,
+      "prob_error": 0.08174166882786182,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "holdout_human_01",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.0868712866618977,
+      "prob_error": 0.0868712866618977,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "holdout_human_02",
+      "gptzero_class": "human",
+      "surrogate_class": "ai",
+      "match": false,
+      "gptzero_prob": 0,
+      "surrogate_prob": 0.7125793980750239,
+      "prob_error": 0.7125793980750239,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "holdout_human_03",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.9427699066056334,
+      "prob_error": 0.05723009339436658,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "holdout_human_04",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.0346153070523032,
+      "prob_error": 0.0346153070523032,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "holdout_human_05",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 0.8896825158936889,
+      "prob_error": 0.11031748410631115,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "holdout_ai_01",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.0293084783491628,
+      "prob_error": 0.029308478349162836,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "holdout_ai_02",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.0453922511733014,
+      "prob_error": 0.04539225117330137,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "holdout_ai_03",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.0303579928525386,
+      "prob_error": 0.030357992852538596,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "holdout_ai_04",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.0951004965284064,
+      "prob_error": 0.09510049652840635,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "holdout_ai_05",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.000368262403407,
+      "prob_error": 0.00036826240340692706,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "holdout_mixed_01",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.1950820589016626,
+      "prob_error": 0.19508205890166264,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "holdout_mixed_02",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.3231808031313417,
+      "prob_error": 0.3231808031313417,
+      "gptzero_confidence": "high"
+    },
+    {
+      "sample_id": "holdout_mixed_03",
+      "gptzero_class": "ai",
+      "surrogate_class": "ai",
+      "match": true,
+      "gptzero_prob": 1,
+      "surrogate_prob": 1.023989562719057,
+      "prob_error": 0.023989562719056945,
+      "gptzero_confidence": "high"
+    }
+  ],
+  "timestamp": "2026-02-20T18:48:17.666205"
+}
