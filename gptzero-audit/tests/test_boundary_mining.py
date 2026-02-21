@@ -1,6 +1,7 @@
 import unittest
 
 from src.boundary_mining import (
+    adaptive_boundary_band,
     ai_formalize_variants,
     boundary_distance,
     contractionize,
@@ -42,6 +43,28 @@ class BoundaryMiningUtilsTest(unittest.TestCase):
         self.assertAlmostEqual(boundary_distance(0.9), 0.4)
         self.assertTrue(in_boundary_band(0.5, 0.35, 0.65))
         self.assertFalse(in_boundary_band(0.9, 0.35, 0.65))
+
+    def test_adaptive_boundary_band_tightens(self) -> None:
+        low0, high0 = adaptive_boundary_band(
+            step_idx=0,
+            max_steps=4,
+            initial_low=0.30,
+            initial_high=0.70,
+            tight_low=0.40,
+            tight_high=0.60,
+        )
+        low_last, high_last = adaptive_boundary_band(
+            step_idx=3,
+            max_steps=4,
+            initial_low=0.30,
+            initial_high=0.70,
+            tight_low=0.40,
+            tight_high=0.60,
+        )
+        self.assertAlmostEqual(low0, 0.30)
+        self.assertAlmostEqual(high0, 0.70)
+        self.assertAlmostEqual(low_last, 0.40)
+        self.assertAlmostEqual(high_last, 0.60)
 
 
 if __name__ == "__main__":

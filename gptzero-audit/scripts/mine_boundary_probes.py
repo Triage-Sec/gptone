@@ -21,6 +21,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.boundary_mining import (
+    adaptive_boundary_band,
     boundary_distance,
     generate_directional_variants,
     in_boundary_band,
@@ -49,6 +50,15 @@ class ScoredText:
     predicted_class: str
     response: Dict[str, object]
     origin: str
+
+
+@dataclass
+class MinedCandidate:
+    base_sample_id: str
+    scored: ScoredText
+    in_band: bool
+    distance: float
+    trace: Dict[str, object]
 
 
 def file_sha256(path: Path) -> str:
@@ -161,6 +171,40 @@ def _build_candidate_rows(
     return candidates
 
 
+def _class_quota_targets(
+    *,
+    max_mined_samples: int,
+    quota_ai: Optional[int],
+    quota_human: Optional[int],
+    quota_mixed: Optional[int],
+) -> Dict[str, int]:
+    explicit = {
+        "ai": quota_ai,
+        "human": quota_human,
+        "mixed": quota_mixed,
+    }
+    if any(v is not None for v in explicit.values()):
+        total = sum(int(v or 0) for v in explicit.values())
+        if total <= 0:
+            raise ValueError("At least one class quota must be > 0 when explicit quotas are provided.")
+        if total > max_mined_samples:
+            raise ValueError("Sum of class quotas cannot exceed --max-mined-samples.")
+        quotas = {k: int(v or 0) for k, v in explicit.items()}
+        remainder = max_mined_samples - total
+        if remainder > 0:
+            quotas["mixed"] += remainder
+        return quotas
+
+    # Default: evenly split target with mixed carrying remainder.
+    base = max_mined_samples // 3
+    remainder = max_mined_samples - (base * 3)
+    return {
+        "ai": base,
+        "human": base,
+        "mixed": base + remainder,
+    }
+
+
 def _safe_sample_id(base_sample_id: str, text: str, existing: set[str]) -> str:
     stem = re.sub(r"[^A-Za-z0-9_]+", "_", base_sample_id).strip("_").lower()
     stem = stem[:24] if stem else "probe"
@@ -186,7 +230,10 @@ def _mine_for_base(
     max_steps: int,
     branching_factor: int,
     initial_scored: Optional[ScoredText] = None,
-) -> Tuple[Optional[ScoredText], Dict[str, object]]:
+    adaptive_band: bool = True,
+    tight_boundary_low: float = 0.40,
+    tight_boundary_high: float = 0.60,
+) -> Tuple[Optional[MinedCandidate], Dict[str, object]]:
     base_scored = initial_scored or _predict(client, base_text, delay=delay)
     trace: Dict[str, object] = {
         "base_sample_id": base_sample_id,
@@ -202,9 +249,22 @@ def _mine_for_base(
 
     current = base_scored
     best = base_scored
+    best_in_band: Optional[ScoredText] = None
     visited = {hashlib.sha256(current.text.encode("utf-8")).hexdigest()}
 
     for step_idx in range(max_steps):
+        if adaptive_band:
+            step_low, step_high = adaptive_boundary_band(
+                step_idx=step_idx,
+                max_steps=max_steps,
+                initial_low=boundary_low,
+                initial_high=boundary_high,
+                tight_low=tight_boundary_low,
+                tight_high=tight_boundary_high,
+            )
+        else:
+            step_low, step_high = boundary_low, boundary_high
+
         primary_direction = "toward_human" if current.prob_ai >= 0.5 else "toward_ai"
         secondary_direction = "toward_ai" if primary_direction == "toward_human" else "toward_human"
         variants: List[Tuple[str, str]] = []
@@ -230,6 +290,8 @@ def _mine_for_base(
                 {
                     "step": step_idx + 1,
                     "direction": primary_direction,
+                    "band_low": step_low,
+                    "band_high": step_high,
                     "evaluated": 0,
                     "selected_prob_ai": current.prob_ai,
                 }
@@ -245,6 +307,8 @@ def _mine_for_base(
             {
                 "step": step_idx + 1,
                 "direction": primary_direction,
+                "band_low": step_low,
+                "band_high": step_high,
                 "evaluated": len(candidates),
                 "selected_prob_ai": current.prob_ai,
                 "selected_predicted_class": current.predicted_class,
@@ -252,22 +316,29 @@ def _mine_for_base(
             }
         )
 
-        if in_boundary_band(current.prob_ai, boundary_low, boundary_high):
-            trace["accepted"] = True
-            trace["accepted_prob_ai"] = current.prob_ai
-            trace["accepted_predicted_class"] = current.predicted_class
-            return current, trace
+        if in_boundary_band(current.prob_ai, step_low, step_high):
+            if best_in_band is None or boundary_distance(current.prob_ai) < boundary_distance(best_in_band.prob_ai):
+                best_in_band = current
 
-    if in_boundary_band(best.prob_ai, boundary_low, boundary_high):
-        trace["accepted"] = True
-        trace["accepted_prob_ai"] = best.prob_ai
-        trace["accepted_predicted_class"] = best.predicted_class
-        return best, trace
-
+    selected = best_in_band or best
+    selected_in_band = best_in_band is not None
+    trace["accepted"] = selected_in_band
+    trace["selected_in_band"] = selected_in_band
+    trace["selected_prob_ai"] = selected.prob_ai
+    trace["selected_predicted_class"] = selected.predicted_class
+    trace["selected_distance_to_boundary"] = boundary_distance(selected.prob_ai)
     trace["best_prob_ai"] = best.prob_ai
     trace["best_predicted_class"] = best.predicted_class
     trace["best_distance_to_boundary"] = boundary_distance(best.prob_ai)
-    return None, trace
+
+    candidate = MinedCandidate(
+        base_sample_id=base_sample_id,
+        scored=selected,
+        in_band=selected_in_band,
+        distance=boundary_distance(selected.prob_ai),
+        trace=trace,
+    )
+    return candidate, trace
 
 
 def _write_dataset_manifest(
@@ -349,10 +420,22 @@ def main() -> int:
     parser.add_argument("--max-base-samples", type=int, default=12)
     parser.add_argument("--base-screen-size", type=int, default=36)
     parser.add_argument("--max-mined-samples", type=int, default=24)
+    parser.add_argument("--fallback-top-k", type=int, default=8)
     parser.add_argument("--max-steps", type=int, default=3)
     parser.add_argument("--branching-factor", type=int, default=4)
     parser.add_argument("--boundary-low", type=float, default=0.35)
     parser.add_argument("--boundary-high", type=float, default=0.65)
+    parser.add_argument("--tight-boundary-low", type=float, default=0.40)
+    parser.add_argument("--tight-boundary-high", type=float, default=0.60)
+    parser.add_argument(
+        "--adaptive-band",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Interpolate from initial boundary band to tight boundary band across mining steps.",
+    )
+    parser.add_argument("--quota-ai", type=int, help="Optional class quota for AI-labeled mined probes.")
+    parser.add_argument("--quota-human", type=int, help="Optional class quota for human-labeled mined probes.")
+    parser.add_argument("--quota-mixed", type=int, help="Optional class quota for mixed-labeled mined probes.")
     parser.add_argument(
         "--include-verified-bases",
         action=argparse.BooleanOptionalAction,
@@ -364,6 +447,8 @@ def main() -> int:
 
     if args.boundary_low >= args.boundary_high:
         raise ValueError("--boundary-low must be less than --boundary-high")
+    if args.tight_boundary_low >= args.tight_boundary_high:
+        raise ValueError("--tight-boundary-low must be less than --tight-boundary-high")
 
     api_key = (
         args.api_key
@@ -411,19 +496,27 @@ def main() -> int:
 
     mined_rows: List[Dict[str, object]] = []
     trace_rows: List[Dict[str, object]] = []
+    candidate_pool: List[Tuple[MinedCandidate, str]] = []
     existing_ids = {str(r["sample_id"]) for r in source_probes}
     existing_text_hashes = {
         hashlib.sha256(normalize_text(str(r["text"])).encode("utf-8")).hexdigest()
         for r in source_probes
     }
+    candidate_text_hashes = set(existing_text_hashes)
+    quota_targets = _class_quota_targets(
+        max_mined_samples=args.max_mined_samples,
+        quota_ai=args.quota_ai,
+        quota_human=args.quota_human,
+        quota_mixed=args.quota_mixed,
+    )
+    quota_counts = {k: 0 for k in quota_targets}
+    print(f"Class quota targets: {quota_targets}", flush=True)
 
     for idx, row in enumerate(base_rows, start=1):
-        if len(mined_rows) >= args.max_mined_samples:
-            break
         base_id = str(row["sample_id"])
         base_text = str(row["text"])
         print(f"[{idx}/{len(base_rows)}] mining from {base_id} ...", flush=True)
-        accepted, trace = _mine_for_base(
+        candidate, trace = _mine_for_base(
             client=client,
             base_sample_id=base_id,
             base_text=base_text,
@@ -433,42 +526,105 @@ def main() -> int:
             max_steps=args.max_steps,
             branching_factor=args.branching_factor,
             initial_scored=base_scored_lookup.get(base_id),
+            adaptive_band=bool(args.adaptive_band),
+            tight_boundary_low=args.tight_boundary_low,
+            tight_boundary_high=args.tight_boundary_high,
+        )
+        trace_rows.append(trace)
+
+        if candidate is None:
+            print("  candidate generation failed", flush=True)
+            continue
+
+        text_hash = hashlib.sha256(normalize_text(candidate.scored.text).encode("utf-8")).hexdigest()
+        if text_hash in candidate_text_hashes:
+            trace["accepted"] = False
+            trace["rejected_reason"] = "duplicate_text"
+            print("  candidate duplicate text; skipped", flush=True)
+            continue
+        candidate_text_hashes.add(text_hash)
+        candidate_pool.append((candidate, text_hash))
+        print(
+            f"  candidate prob_ai={candidate.scored.prob_ai:.3f} "
+            f"class={candidate.scored.predicted_class} "
+            f"in_band={candidate.in_band}",
+            flush=True,
         )
 
-        if accepted is not None:
-            text_hash = hashlib.sha256(normalize_text(accepted.text).encode("utf-8")).hexdigest()
-            if text_hash in existing_text_hashes:
-                trace["accepted"] = False
-                trace["rejected_reason"] = "duplicate_text"
-                print("  candidate reached boundary but text duplicate; skipped", flush=True)
-                trace_rows.append(trace)
+    candidate_pool.sort(key=lambda pair: pair[0].distance)
+    selected_hashes: set[str] = set()
+
+    def _norm_cls(raw: str) -> str:
+        norm = str(raw).strip().lower()
+        return norm if norm in quota_targets else "mixed"
+
+    def _materialize_row(candidate: MinedCandidate, text_hash: str, mode: str) -> None:
+        sample_id = _safe_sample_id(candidate.base_sample_id, candidate.scored.text, existing_ids)
+        existing_ids.add(sample_id)
+        existing_text_hashes.add(text_hash)
+        selected_hashes.add(text_hash)
+        pred_class = _norm_cls(candidate.scored.predicted_class)
+        quota_counts[pred_class] = quota_counts.get(pred_class, 0) + 1
+        mined_rows.append(
+            {
+                "sample_id": sample_id,
+                "text": candidate.scored.text,
+                "collection": "attack_train",
+                "source": f"boundary_mining_{args.target_version}",
+                "ground_truth_label": None,
+                "mined_from_sample_id": candidate.base_sample_id,
+                "mined_prob_ai": candidate.scored.prob_ai,
+                "mined_predicted_class": candidate.scored.predicted_class,
+                "mined_distance_to_boundary": candidate.distance,
+                "mined_selection_mode": mode,
+                "boundary_band": [args.boundary_low, args.boundary_high],
+                "tight_boundary_band": [args.tight_boundary_low, args.tight_boundary_high],
+            }
+        )
+        candidate.trace["accepted"] = True
+        candidate.trace["accepted_sample_id"] = sample_id
+        candidate.trace["selection_mode"] = mode
+
+    # Pass 1: in-band candidates honoring quotas.
+    for candidate, text_hash in candidate_pool:
+        if len(mined_rows) >= args.max_mined_samples:
+            break
+        if not candidate.in_band:
+            continue
+        cls = _norm_cls(candidate.scored.predicted_class)
+        if quota_counts.get(cls, 0) >= quota_targets.get(cls, 0):
+            continue
+        _materialize_row(candidate, text_hash, mode="in_band")
+
+    # Pass 2: closest fallback candidates when in-band hits are low.
+    remaining = [
+        (candidate, text_hash)
+        for candidate, text_hash in candidate_pool
+        if text_hash not in selected_hashes
+    ]
+    remaining.sort(
+        key=lambda pair: (
+            quota_counts.get(_norm_cls(pair[0].scored.predicted_class), 0)
+            >= quota_targets.get(_norm_cls(pair[0].scored.predicted_class), 0),
+            pair[0].distance,
+        )
+    )
+    fallback_budget = max(args.fallback_top_k, args.max_mined_samples - len(mined_rows))
+    for candidate, text_hash in remaining[:fallback_budget]:
+        if len(mined_rows) >= args.max_mined_samples:
+            break
+        cls = _norm_cls(candidate.scored.predicted_class)
+        if quota_counts.get(cls, 0) < quota_targets.get(cls, 0):
+            _materialize_row(candidate, text_hash, mode="fallback_topk")
+
+    # Pass 3: fill remaining slots by nearest distance regardless of class quota.
+    if len(mined_rows) < args.max_mined_samples:
+        for candidate, text_hash in remaining:
+            if len(mined_rows) >= args.max_mined_samples:
+                break
+            if text_hash in selected_hashes:
                 continue
-
-            sample_id = _safe_sample_id(base_id, accepted.text, existing_ids)
-            existing_ids.add(sample_id)
-            existing_text_hashes.add(text_hash)
-            mined_rows.append(
-                {
-                    "sample_id": sample_id,
-                    "text": accepted.text,
-                    "collection": "attack_train",
-                    "source": "boundary_mining_v3",
-                    "ground_truth_label": None,
-                    "mined_from_sample_id": base_id,
-                    "mined_prob_ai": accepted.prob_ai,
-                    "mined_predicted_class": accepted.predicted_class,
-                    "boundary_band": [args.boundary_low, args.boundary_high],
-                }
-            )
-            trace["accepted_sample_id"] = sample_id
-            print(
-                f"  accepted {sample_id} prob_ai={accepted.prob_ai:.3f} class={accepted.predicted_class}",
-                flush=True,
-            )
-        else:
-            print("  no boundary candidate found for this base", flush=True)
-
-        trace_rows.append(trace)
+            _materialize_row(candidate, text_hash, mode="fallback_fill")
 
     probes_target = source_probes + mined_rows
     probes_path = target_dir / "probes.jsonl"
@@ -489,16 +645,26 @@ def main() -> int:
             "max_base_samples": args.max_base_samples,
             "base_screen_size": args.base_screen_size,
             "max_mined_samples": args.max_mined_samples,
+            "fallback_top_k": args.fallback_top_k,
             "max_steps": args.max_steps,
             "branching_factor": args.branching_factor,
             "boundary_low": args.boundary_low,
             "boundary_high": args.boundary_high,
+            "tight_boundary_low": args.tight_boundary_low,
+            "tight_boundary_high": args.tight_boundary_high,
+            "adaptive_band": args.adaptive_band,
+            "quota_targets": quota_targets,
+            "quota_ai": args.quota_ai,
+            "quota_human": args.quota_human,
+            "quota_mixed": args.quota_mixed,
             "include_verified_bases": args.include_verified_bases,
         },
         "summary": {
             "base_candidates_screened": len(screen_rows),
             "base_samples_selected": len(base_rows),
+            "candidate_pool_size": len(candidate_pool),
             "accepted_boundary_samples": len(mined_rows),
+            "accepted_by_predicted_class": quota_counts,
             "api_calls": client.call_count,
             "api_words": client.total_words,
         },
@@ -522,6 +688,7 @@ def main() -> int:
             "max_steps": args.max_steps,
             "branching_factor": args.branching_factor,
             "base_screen_size": args.base_screen_size,
+            "fallback_top_k": args.fallback_top_k,
             "max_base_samples": args.max_base_samples,
             "seed": args.seed,
         },

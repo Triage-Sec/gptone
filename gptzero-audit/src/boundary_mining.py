@@ -235,3 +235,25 @@ def boundary_distance(prob_ai: float) -> float:
 
 def in_boundary_band(prob_ai: float, low: float, high: float) -> bool:
     return float(low) <= float(prob_ai) <= float(high)
+
+
+def adaptive_boundary_band(
+    *,
+    step_idx: int,
+    max_steps: int,
+    initial_low: float,
+    initial_high: float,
+    tight_low: float = 0.40,
+    tight_high: float = 0.60,
+) -> tuple[float, float]:
+    """
+    Interpolate from a wider boundary band to a tighter one across steps.
+
+    This keeps early exploration broad while making later selections stricter.
+    """
+    if max_steps <= 1:
+        return float(initial_low), float(initial_high)
+    progress = min(max(step_idx, 0), max_steps - 1) / float(max_steps - 1)
+    low = float(initial_low) + (float(tight_low) - float(initial_low)) * progress
+    high = float(initial_high) + (float(tight_high) - float(initial_high)) * progress
+    return low, high

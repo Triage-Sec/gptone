@@ -1,0 +1,789 @@
+{
+  "source_dataset_version": "v2",
+  "target_dataset_version": "v4",
+  "started_from_utc": "2026-02-21T04:46:12.973026+00:00",
+  "config": {
+    "seed": 42,
+    "delay": 0.5,
+    "max_base_samples": 16,
+    "base_screen_size": 48,
+    "max_mined_samples": 18,
+    "fallback_top_k": 10,
+    "max_steps": 3,
+    "branching_factor": 4,
+    "boundary_low": 0.3,
+    "boundary_high": 0.7,
+    "tight_boundary_low": 0.4,
+    "tight_boundary_high": 0.6,
+    "adaptive_band": true,
+    "quota_targets": {
+      "ai": 6,
+      "human": 6,
+      "mixed": 6
+    },
+    "quota_ai": 6,
+    "quota_human": 6,
+    "quota_mixed": 6,
+    "include_verified_bases": true
+  },
+  "summary": {
+    "base_candidates_screened": 48,
+    "base_samples_selected": 16,
+    "candidate_pool_size": 9,
+    "accepted_boundary_samples": 9,
+    "accepted_by_predicted_class": {
+      "ai": 0,
+      "human": 2,
+      "mixed": 7
+    },
+    "api_calls": 413,
+    "api_words": 47428
+  },
+  "trace": [
+    {
+      "base_sample_id": "style_launch_brief_vs_founder_note_mixed",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 7,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 7,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": false,
+      "selected_prob_ai": 1.0,
+      "selected_predicted_class": "ai",
+      "selected_distance_to_boundary": 0.5,
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5,
+      "rejected_reason": "duplicate_text"
+    },
+    {
+      "base_sample_id": "train_mixed_5",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 7,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 6,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": false,
+      "selected_prob_ai": 1.0,
+      "selected_predicted_class": "ai",
+      "selected_distance_to_boundary": 0.5,
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5,
+      "rejected_reason": "duplicate_text"
+    },
+    {
+      "base_sample_id": "train_human_3",
+      "accepted": true,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 8,
+          "selected_prob_ai": 0.9285714285714286,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.4285714285714286
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 7,
+          "selected_prob_ai": 0.9285714285714286,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.4285714285714286
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": false,
+      "selected_prob_ai": 0.9285714285714286,
+      "selected_predicted_class": "mixed",
+      "selected_distance_to_boundary": 0.4285714285714286,
+      "best_prob_ai": 0.9285714285714286,
+      "best_predicted_class": "mixed",
+      "best_distance_to_boundary": 0.4285714285714286,
+      "accepted_sample_id": "mine_train_human_3_f5f76487",
+      "selection_mode": "fallback_fill"
+    },
+    {
+      "base_sample_id": "bound_080pct_human",
+      "accepted": true,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 0.9090909090909091,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.40909090909090906
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 8,
+          "selected_prob_ai": 0.9166666666666666,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.41666666666666663
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 8,
+          "selected_prob_ai": 0.9166666666666666,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.41666666666666663
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": false,
+      "selected_prob_ai": 0.9090909090909091,
+      "selected_predicted_class": "mixed",
+      "selected_distance_to_boundary": 0.40909090909090906,
+      "best_prob_ai": 0.9090909090909091,
+      "best_predicted_class": "mixed",
+      "best_distance_to_boundary": 0.40909090909090906,
+      "accepted_sample_id": "mine_bound_080pct_human_3711e1bc",
+      "selection_mode": "fallback_topk"
+    },
+    {
+      "base_sample_id": "grad_first_person",
+      "accepted": true,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 8,
+          "selected_prob_ai": 0.5,
+          "selected_predicted_class": "human",
+          "distance_to_boundary": 0.0
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 8,
+          "selected_prob_ai": 0.5,
+          "selected_predicted_class": "human",
+          "distance_to_boundary": 0.0
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": true,
+      "selected_prob_ai": 0.5,
+      "selected_predicted_class": "human",
+      "selected_distance_to_boundary": 0.0,
+      "best_prob_ai": 0.5,
+      "best_predicted_class": "human",
+      "best_distance_to_boundary": 0.0,
+      "accepted_sample_id": "mine_grad_first_person_e25a9ac2",
+      "selection_mode": "in_band"
+    },
+    {
+      "base_sample_id": "hmm_HHAA",
+      "accepted": true,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 0.8,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.30000000000000004
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 8,
+          "selected_prob_ai": 0.6,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.09999999999999998
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 8,
+          "selected_prob_ai": 0.8,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.30000000000000004
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": true,
+      "selected_prob_ai": 0.6,
+      "selected_predicted_class": "mixed",
+      "selected_distance_to_boundary": 0.09999999999999998,
+      "best_prob_ai": 0.6,
+      "best_predicted_class": "mixed",
+      "best_distance_to_boundary": 0.09999999999999998,
+      "accepted_sample_id": "mine_hmm_hhaa_d8d9d7e4",
+      "selection_mode": "in_band"
+    },
+    {
+      "base_sample_id": "mem_edge_constitution",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_ai",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 0.0,
+          "selected_predicted_class": "human",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_ai",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 8,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 7,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "human",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 0.0,
+      "base_predicted_class": "human",
+      "selected_in_band": false,
+      "selected_prob_ai": 0.0,
+      "selected_predicted_class": "human",
+      "selected_distance_to_boundary": 0.5,
+      "best_prob_ai": 0.0,
+      "best_predicted_class": "human",
+      "best_distance_to_boundary": 0.5,
+      "rejected_reason": "duplicate_text"
+    },
+    {
+      "base_sample_id": "ppl_medium",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 7,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 6,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": false,
+      "selected_prob_ai": 1.0,
+      "selected_predicted_class": "ai",
+      "selected_distance_to_boundary": 0.5,
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5,
+      "rejected_reason": "duplicate_text"
+    },
+    {
+      "base_sample_id": "style_forecast_vs_local_judgment_ai",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 8,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 7,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": false,
+      "selected_prob_ai": 1.0,
+      "selected_predicted_class": "ai",
+      "selected_distance_to_boundary": 0.5,
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5,
+      "rejected_reason": "duplicate_text"
+    },
+    {
+      "base_sample_id": "train_mixed_7",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 7,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 6,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": false,
+      "selected_prob_ai": 1.0,
+      "selected_predicted_class": "ai",
+      "selected_distance_to_boundary": 0.5,
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5,
+      "rejected_reason": "duplicate_text"
+    },
+    {
+      "base_sample_id": "train_human_4",
+      "accepted": true,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 0.9090909090909091,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.40909090909090906
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 8,
+          "selected_prob_ai": 0.8333333333333334,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.33333333333333337
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 8,
+          "selected_prob_ai": 0.7692307692307693,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.2692307692307693
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": false,
+      "selected_prob_ai": 0.7692307692307693,
+      "selected_predicted_class": "mixed",
+      "selected_distance_to_boundary": 0.2692307692307693,
+      "best_prob_ai": 0.7692307692307693,
+      "best_predicted_class": "mixed",
+      "best_distance_to_boundary": 0.2692307692307693,
+      "accepted_sample_id": "mine_train_human_4_5187cd9f",
+      "selection_mode": "fallback_topk"
+    },
+    {
+      "base_sample_id": "bound_010pct_human",
+      "accepted": true,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 0.8181818181818182,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.31818181818181823
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 8,
+          "selected_prob_ai": 0.75,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.25
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 8,
+          "selected_prob_ai": 0.6923076923076923,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.1923076923076923
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": false,
+      "selected_prob_ai": 0.6923076923076923,
+      "selected_predicted_class": "mixed",
+      "selected_distance_to_boundary": 0.1923076923076923,
+      "best_prob_ai": 0.6923076923076923,
+      "best_predicted_class": "mixed",
+      "best_distance_to_boundary": 0.1923076923076923,
+      "accepted_sample_id": "mine_bound_010pct_human_86d61c5a",
+      "selection_mode": "fallback_topk"
+    },
+    {
+      "base_sample_id": "grad_vocab_simplify",
+      "accepted": true,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 0.5,
+          "selected_predicted_class": "human",
+          "distance_to_boundary": 0.0
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 8,
+          "selected_prob_ai": 0.3333333333333333,
+          "selected_predicted_class": "human",
+          "distance_to_boundary": 0.16666666666666669
+        },
+        {
+          "step": 3,
+          "direction": "toward_ai",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 8,
+          "selected_prob_ai": 0.25,
+          "selected_predicted_class": "human",
+          "distance_to_boundary": 0.25
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": true,
+      "selected_prob_ai": 0.5,
+      "selected_predicted_class": "human",
+      "selected_distance_to_boundary": 0.0,
+      "best_prob_ai": 0.5,
+      "best_predicted_class": "human",
+      "best_distance_to_boundary": 0.0,
+      "accepted_sample_id": "mine_grad_vocab_simplify_3a93c6cb",
+      "selection_mode": "in_band"
+    },
+    {
+      "base_sample_id": "hmm_AHAH",
+      "accepted": true,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 0.8,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.30000000000000004
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 8,
+          "selected_prob_ai": 0.8,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.30000000000000004
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 8,
+          "selected_prob_ai": 0.8,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.30000000000000004
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": false,
+      "selected_prob_ai": 0.8,
+      "selected_predicted_class": "mixed",
+      "selected_distance_to_boundary": 0.30000000000000004,
+      "best_prob_ai": 0.8,
+      "best_predicted_class": "mixed",
+      "best_distance_to_boundary": 0.30000000000000004,
+      "accepted_sample_id": "mine_hmm_ahah_6bea8383",
+      "selection_mode": "fallback_topk"
+    },
+    {
+      "base_sample_id": "mem_likely_email",
+      "accepted": false,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 7,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 7,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": false,
+      "selected_prob_ai": 1.0,
+      "selected_predicted_class": "ai",
+      "selected_distance_to_boundary": 0.5,
+      "best_prob_ai": 1.0,
+      "best_predicted_class": "ai",
+      "best_distance_to_boundary": 0.5,
+      "rejected_reason": "duplicate_text"
+    },
+    {
+      "base_sample_id": "ppl_very_high",
+      "accepted": true,
+      "steps": [
+        {
+          "step": 1,
+          "direction": "toward_human",
+          "band_low": 0.3,
+          "band_high": 0.7,
+          "evaluated": 8,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 2,
+          "direction": "toward_human",
+          "band_low": 0.35,
+          "band_high": 0.6499999999999999,
+          "evaluated": 7,
+          "selected_prob_ai": 1.0,
+          "selected_predicted_class": "ai",
+          "distance_to_boundary": 0.5
+        },
+        {
+          "step": 3,
+          "direction": "toward_human",
+          "band_low": 0.4,
+          "band_high": 0.6,
+          "evaluated": 6,
+          "selected_prob_ai": 0.8571428571428571,
+          "selected_predicted_class": "mixed",
+          "distance_to_boundary": 0.3571428571428571
+        }
+      ],
+      "base_prob_ai": 1.0,
+      "base_predicted_class": "ai",
+      "selected_in_band": false,
+      "selected_prob_ai": 0.8571428571428571,
+      "selected_predicted_class": "mixed",
+      "selected_distance_to_boundary": 0.3571428571428571,
+      "best_prob_ai": 0.8571428571428571,
+      "best_predicted_class": "mixed",
+      "best_distance_to_boundary": 0.3571428571428571,
+      "accepted_sample_id": "mine_ppl_very_high_308bc2de",
+      "selection_mode": "fallback_topk"
+    }
+  ]
+}
