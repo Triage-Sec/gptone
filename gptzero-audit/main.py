@@ -50,13 +50,23 @@ from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.svm import SVC
-from sklearn.model_selection import StratifiedKFold, KFold, cross_val_score
+from sklearn.base import clone
+from sklearn.model_selection import (
+    KFold,
+    RepeatedStratifiedKFold,
+    StratifiedKFold,
+    cross_val_score,
+    train_test_split,
+)
 from sklearn.metrics import (
+    balanced_accuracy_score,
     classification_report, confusion_matrix, accuracy_score,
-    mean_squared_error, mean_absolute_error, r2_score,
+    log_loss,
+    mean_absolute_error, r2_score,
 )
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
+from sklearn.multioutput import MultiOutputRegressor
 import joblib
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -264,11 +274,89 @@ API_RESPONSE_FEATURE_NAMES = [
 ]
 
 
+def _api_feature_vector(result):
+    feats = extract_api_response_features(result)
+    return [float(feats.get(name, 0.0)) for name in API_RESPONSE_FEATURE_NAMES]
+
+
+def _normalize_probability_rows(mat):
+    arr = np.array(mat, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    arr = np.clip(arr, 1e-8, 1.0)
+    sums = arr.sum(axis=1, keepdims=True)
+    sums[sums <= 0] = 1.0
+    return arr / sums
+
+
+def _temperature_scale(prob_rows, temperature):
+    p = np.clip(np.array(prob_rows, dtype=float), 1e-8, 1.0)
+    if temperature <= 0:
+        temperature = 1.0
+    logits = np.log(p)
+    scaled = logits / float(temperature)
+    scaled = np.exp(scaled - np.max(scaled, axis=1, keepdims=True))
+    denom = scaled.sum(axis=1, keepdims=True)
+    denom[denom <= 0] = 1.0
+    return scaled / denom
+
+
+def _fit_temperature(raw_prob_rows, y_cls_encoded):
+    probs = _normalize_probability_rows(raw_prob_rows)
+    y = np.array(y_cls_encoded, dtype=int)
+    candidates = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+    best_t = 1.0
+    best_loss = float("inf")
+    for t in candidates:
+        scaled = _temperature_scale(probs, t)
+        try:
+            loss = log_loss(y, scaled, labels=list(range(scaled.shape[1])))
+        except ValueError:
+            continue
+        if loss < best_loss:
+            best_loss = loss
+            best_t = t
+    return float(best_t), float(best_loss if np.isfinite(best_loss) else 0.0)
+
+
+def _oversample_balanced(X, y_cls, y_prob, y_prob_vec, seed):
+    rng = np.random.RandomState(seed)
+    y_arr = np.array(y_cls, dtype=int)
+    class_counts = np.bincount(y_arr)
+    if len(class_counts) == 0:
+        return X, y_arr, y_prob, y_prob_vec
+    max_count = int(class_counts.max())
+    sampled_idx = []
+    for class_idx, count in enumerate(class_counts):
+        if count == 0:
+            continue
+        class_indices = np.where(y_arr == class_idx)[0]
+        draws = rng.choice(class_indices, size=max_count, replace=True)
+        sampled_idx.extend(draws.tolist())
+    rng.shuffle(sampled_idx)
+    sampled_idx = np.array(sampled_idx, dtype=int)
+    return (
+        np.array(X)[sampled_idx],
+        y_arr[sampled_idx],
+        np.array(y_prob)[sampled_idx],
+        np.array(y_prob_vec)[sampled_idx],
+    )
+
+
 # ====================================================================
 # STEP 2: TRAIN SURROGATE (Classifier + Regressor)
 # ====================================================================
 
-def step_train(results, seed=DEFAULT_SEED, run_metadata=None):
+def step_train(
+    results,
+    seed=DEFAULT_SEED,
+    run_metadata=None,
+    use_api_features=True,
+    enable_probability_objective=True,
+    enable_oversampling=True,
+    calibration_method="temperature",
+    cv_repeats=3,
+):
     """
     Train surrogate models on GPTZero's outputs.
 
@@ -285,6 +373,7 @@ def step_train(results, seed=DEFAULT_SEED, run_metadata=None):
 
     texts, labels, probs = [], [], []
     api_feats_list = []
+    class_prob_dicts = []
     for r in results:
         if "error" in r:
             continue
@@ -296,20 +385,47 @@ def step_train(results, seed=DEFAULT_SEED, run_metadata=None):
             labels.append(cls)
             probs.append(avg_prob if avg_prob is not None else 0.0)
             api_feats_list.append(extract_api_response_features(r))
+            class_prob_dicts.append(r.get("class_probabilities") or {})
 
     print(f"Training samples with labels: {len(texts)}")
 
     if len(texts) < 10:
         print("ERROR: Not enough labeled samples. Check API results.")
-        return None, None, None
+        return None, None, None, None, {}
 
     X_text, feat_names = extract_features_batch(texts)
+    X_text = np.array(X_text, dtype=float)
+    feature_names = list(feat_names)
+
+    if use_api_features:
+        X_api = np.array(
+            [
+                [float(feats.get(name, 0.0)) for name in API_RESPONSE_FEATURE_NAMES]
+                for feats in api_feats_list
+            ],
+            dtype=float,
+        )
+        X_train_base = np.hstack([X_text, X_api])
+        feature_names = feature_names + API_RESPONSE_FEATURE_NAMES
+    else:
+        X_train_base = X_text
+
     le = LabelEncoder()
     y_cls = le.fit_transform(labels)
     y_prob = np.array(probs)
+    y_prob_vec = []
+    for lbl, class_probs in zip(labels, class_prob_dicts):
+        if isinstance(class_probs, dict):
+            vec = [float(class_probs.get(str(c), 0.0) or 0.0) for c in le.classes_]
+            if sum(vec) <= 0:
+                vec = [1.0 if str(c) == lbl else 0.0 for c in le.classes_]
+        else:
+            vec = [1.0 if str(c) == lbl else 0.0 for c in le.classes_]
+        y_prob_vec.append(vec)
+    y_prob_vec = _normalize_probability_rows(y_prob_vec)
 
     class_counts = np.bincount(y_cls)
-    print(f"Feature dimensions: {X_text.shape}")
+    print(f"Feature dimensions: {X_train_base.shape}")
     print(f"Classes: {list(le.classes_)} (counts: {class_counts.tolist()})")
 
     # Check for minimum class representation
@@ -320,6 +436,25 @@ def step_train(results, seed=DEFAULT_SEED, run_metadata=None):
 
     # ---- CLASSIFIER ----
     print(f"\n--- Classifier Training ---")
+
+    X_train = X_train_base
+    y_cls_train = np.array(y_cls, dtype=int)
+    y_prob_train = np.array(y_prob, dtype=float)
+    y_prob_vec_train = np.array(y_prob_vec, dtype=float)
+
+    if enable_oversampling:
+        X_train, y_cls_train, y_prob_train, y_prob_vec_train = _oversample_balanced(
+            X=X_train_base,
+            y_cls=y_cls,
+            y_prob=y_prob,
+            y_prob_vec=y_prob_vec,
+            seed=seed,
+        )
+        print(f"Oversampled training rows: {len(X_train)}")
+
+    train_class_counts = np.bincount(y_cls_train)
+    min_train_class_count = int(min(train_class_counts))
+    print(f"Training class counts (effective): {train_class_counts.tolist()}")
 
     models_cls = {
         "GradientBoosting": GradientBoostingClassifier(
@@ -338,32 +473,52 @@ def step_train(results, seed=DEFAULT_SEED, run_metadata=None):
         ]),
     }
 
-    k_cls = int(max(min(5, min_class_count), 2))
+    if min_train_class_count >= 2:
+        n_splits_cls = int(max(min(5, min_train_class_count), 2))
+        cls_cv = RepeatedStratifiedKFold(
+            n_splits=n_splits_cls,
+            n_repeats=max(1, int(cv_repeats)),
+            random_state=seed,
+        )
+        cv_label = f"{n_splits_cls}-fold x{max(1, int(cv_repeats))}"
+    else:
+        cls_cv = None
+        cv_label = "disabled"
 
-    best_cls_score = 0
+    best_cls_score = float("-inf")
     best_cls_name = ""
     best_cls_model = None
 
-    print(f"\nCross-validation ({k_cls}-fold stratified):")
+    print(f"\nCross-validation ({cv_label} stratified):")
     for name, model in models_cls.items():
         try:
-            skf = StratifiedKFold(n_splits=k_cls, shuffle=True, random_state=seed)
-            scores = cross_val_score(model, X_text, y_cls, cv=skf, scoring="balanced_accuracy")
-            mean_score = scores.mean()
-            std_score = scores.std()
-            print(f"  {name:25s}  {mean_score:.1%} (+/- {std_score:.1%}) balanced_acc")
+            if cls_cv is None:
+                mean_score = float("nan")
+                std_score = float("nan")
+                print(f"  {name:25s}  CV skipped (minority class <2)")
+            else:
+                scores = cross_val_score(model, X_train, y_cls_train, cv=cls_cv, scoring="balanced_accuracy")
+                mean_score = float(scores.mean())
+                std_score = float(scores.std())
+                print(f"  {name:25s}  {mean_score:.1%} (+/- {std_score:.1%}) balanced_acc")
             if mean_score > best_cls_score:
                 best_cls_score = mean_score
                 best_cls_name = name
-                best_cls_model = models_cls[name]
+                best_cls_model = model
         except Exception as e:
             print(f"  {name:25s}  FAILED: {e}")
 
-    best_cls_model.fit(X_text, y_cls)
-    print(f"\nBest classifier: {best_cls_name} ({best_cls_score:.1%} balanced accuracy)")
+    if best_cls_model is None:
+        best_cls_name = "LogisticRegression"
+        best_cls_model = models_cls[best_cls_name]
+        best_cls_score = 0.0
+
+    best_cls_model.fit(X_train, y_cls_train)
+    cls_score_text = f"{best_cls_score:.1%}" if np.isfinite(best_cls_score) else "N/A"
+    print(f"\nBest classifier: {best_cls_name} ({cls_score_text} balanced accuracy)")
 
     # Feature importance
-    top_features = _get_feature_importances(best_cls_model, feat_names)
+    top_features = _get_feature_importances(best_cls_model, feature_names)
 
     # ---- REGRESSOR ----
     print(f"\n--- Regressor Training (predict avg_generated_prob) ---")
@@ -378,9 +533,9 @@ def step_train(results, seed=DEFAULT_SEED, run_metadata=None):
         ]),
     }
 
-    k_reg = int(max(min(5, len(texts) // 3), 2))
+    k_reg = int(max(min(5, max(2, len(X_train) // 3)), 2))
 
-    best_reg_score = -999
+    best_reg_score = float("-inf")
     best_reg_name = ""
     best_reg_model = None
 
@@ -388,41 +543,136 @@ def step_train(results, seed=DEFAULT_SEED, run_metadata=None):
     for name, model in models_reg.items():
         try:
             kf = KFold(n_splits=k_reg, shuffle=True, random_state=seed)
-            scores = cross_val_score(model, X_text, y_prob, cv=kf, scoring="r2")
-            mean_score = scores.mean()
-            std_score = scores.std()
+            scores = cross_val_score(model, X_train, y_prob_train, cv=kf, scoring="r2")
+            mean_score = float(scores.mean())
+            std_score = float(scores.std())
             print(f"  {name:25s}  R2={mean_score:.3f} (+/- {std_score:.3f})")
             if mean_score > best_reg_score:
                 best_reg_score = mean_score
                 best_reg_name = name
-                best_reg_model = models_reg[name]
+                best_reg_model = model
         except Exception as e:
             print(f"  {name:25s}  FAILED: {e}")
 
-    best_reg_model.fit(X_text, y_prob)
+    if best_reg_model is None:
+        best_reg_name = "Ridge"
+        best_reg_model = models_reg[best_reg_name]
+        best_reg_score = 0.0
+    best_reg_model.fit(X_train, y_prob_train)
     print(f"\nBest regressor: {best_reg_name} (R2={best_reg_score:.3f})")
+
+    # ---- PROBABILITY-VECTOR MODEL ----
+    best_prob_model = None
+    best_prob_name = "disabled"
+    best_prob_cv_mae = None
+    temperature = 1.0
+    temperature_loss = None
+    if enable_probability_objective:
+        print(f"\n--- Probability-Vector Training (predict class_probabilities) ---")
+        models_prob = {
+            "MultiOutputRidge": MultiOutputRegressor(
+                Pipeline([
+                    ("scaler", StandardScaler()),
+                    ("ridge", Ridge(alpha=1.0)),
+                ])
+            ),
+            "MultiOutputGBRegressor": MultiOutputRegressor(
+                GradientBoostingRegressor(
+                    n_estimators=200, max_depth=4, learning_rate=0.1, random_state=seed
+                )
+            ),
+        }
+        k_prob = int(max(min(5, max(2, len(X_train) // 3)), 2))
+        best_prob_score = float("-inf")
+        print(f"\nCross-validation ({k_prob}-fold):")
+        for name, model in models_prob.items():
+            try:
+                kf = KFold(n_splits=k_prob, shuffle=True, random_state=seed)
+                scores = cross_val_score(
+                    model,
+                    X_train,
+                    y_prob_vec_train,
+                    cv=kf,
+                    scoring="neg_mean_absolute_error",
+                )
+                mean_score = float(scores.mean())
+                std_score = float(scores.std())
+                mae = -mean_score
+                print(f"  {name:25s}  MAE={mae:.4f} (+/- {std_score:.4f})")
+                if mean_score > best_prob_score:
+                    best_prob_score = mean_score
+                    best_prob_name = name
+                    best_prob_model = model
+                    best_prob_cv_mae = mae
+            except Exception as e:
+                print(f"  {name:25s}  FAILED: {e}")
+
+        if best_prob_model is None:
+            best_prob_name = "MultiOutputRidge"
+            best_prob_model = models_prob[best_prob_name]
+        best_prob_model.fit(X_train, y_prob_vec_train)
+
+        if calibration_method == "temperature":
+            try:
+                min_cal_class = int(min(np.bincount(y_cls_train)))
+                if min_cal_class >= 2 and len(X_train) >= 12:
+                    X_cal_train, X_cal_val, y_cal_train, y_cal_val, y_prob_vec_cal_train, _ = train_test_split(
+                        X_train,
+                        y_cls_train,
+                        y_prob_vec_train,
+                        test_size=0.25,
+                        random_state=seed,
+                        stratify=y_cls_train,
+                    )
+                    temp_model = clone(best_prob_model)
+                    temp_model.fit(X_cal_train, y_prob_vec_cal_train)
+                    raw_val = temp_model.predict(X_cal_val)
+                    temperature, temperature_loss = _fit_temperature(raw_val, y_cal_val)
+                else:
+                    temperature = 1.0
+                    temperature_loss = None
+            except Exception:
+                temperature = 1.0
+                temperature_loss = None
 
     # ---- SAVE ----
     joblib.dump(best_cls_model, MODEL_DIR / "surrogate_model.joblib")
     joblib.dump(best_reg_model, MODEL_DIR / "surrogate_regressor.joblib")
+    if best_prob_model is not None:
+        joblib.dump(best_prob_model, MODEL_DIR / "surrogate_prob_vector.joblib")
     joblib.dump(le, MODEL_DIR / "label_encoder.joblib")
 
     meta = {
         "classifier": {
             "model_type": best_cls_name,
-            "cv_balanced_accuracy": float(best_cls_score),
-            "cv_folds": int(k_cls),
+            "cv_balanced_accuracy": float(best_cls_score) if np.isfinite(best_cls_score) else None,
+            "cv_folds": int(n_splits_cls) if min_train_class_count >= 2 else None,
+            "cv_repeats": int(max(1, int(cv_repeats))) if min_train_class_count >= 2 else None,
         },
         "regressor": {
             "model_type": best_reg_name,
             "cv_r2": float(best_reg_score),
             "cv_folds": int(k_reg),
         },
+        "probability_objective": {
+            "enabled": bool(enable_probability_objective and best_prob_model is not None),
+            "model_type": best_prob_name,
+            "cv_mae": float(best_prob_cv_mae) if best_prob_cv_mae is not None else None,
+            "calibration_method": calibration_method,
+            "temperature": float(temperature),
+            "temperature_validation_log_loss": temperature_loss,
+        },
         "training_samples": int(len(texts)),
+        "effective_training_samples": int(len(X_train)),
         "classes": list(le.classes_),
         "class_counts": [int(x) for x in class_counts.tolist()],
-        "feature_count": int(len(feat_names)),
-        "feature_names": feat_names,
+        "effective_class_counts": [int(x) for x in train_class_counts.tolist()],
+        "feature_count": int(len(feature_names)),
+        "feature_names": feature_names,
+        "text_feature_count": int(len(feat_names)),
+        "api_feature_count": int(len(API_RESPONSE_FEATURE_NAMES) if use_api_features else 0),
+        "uses_api_features": bool(use_api_features),
+        "oversampling_enabled": bool(enable_oversampling),
         "top_features": top_features,
         "api_response_feature_names": API_RESPONSE_FEATURE_NAMES,
         "seed": seed,
@@ -440,7 +690,7 @@ def step_train(results, seed=DEFAULT_SEED, run_metadata=None):
             bar = "#" * int(imp * 100)
             print(f"  {fname:35s} {imp:.4f} {bar}")
 
-    return best_cls_model, best_reg_model, le, meta
+    return best_cls_model, best_reg_model, best_prob_model, le, meta
 
 
 def _get_feature_importances(model, feat_names):
@@ -472,7 +722,9 @@ def step_test(
     client,
     cls_model,
     reg_model,
+    prob_vector_model,
     le,
+    model_meta=None,
     delay=0.5,
     dataset_version="v1",
     use_network_cache=True,
@@ -532,9 +784,45 @@ def step_test(
                 indent=2,
             )
 
-    X_test, _ = extract_features_batch(texts)
-    surrogate_cls_encoded = cls_model.predict(X_test)
-    surrogate_cls = le.inverse_transform(surrogate_cls_encoded)
+    X_text_test, _ = extract_features_batch(texts)
+    X_text_test = np.array(X_text_test, dtype=float)
+    model_meta = model_meta or {}
+    use_api_features = bool(model_meta.get("uses_api_features", False))
+    if use_api_features:
+        X_api_test = np.array(
+            [
+                _api_feature_vector(gz) if "error" not in gz else [0.0] * len(API_RESPONSE_FEATURE_NAMES)
+                for gz in gptzero_results
+            ],
+            dtype=float,
+        )
+        X_test = np.hstack([X_text_test, X_api_test])
+    else:
+        X_test = X_text_test
+
+    prob_obj_meta = model_meta.get("probability_objective", {}) if isinstance(model_meta, dict) else {}
+    use_prob_vector = bool(
+        prob_vector_model is not None
+        and isinstance(prob_obj_meta, dict)
+        and prob_obj_meta.get("enabled", False)
+    )
+    surrogate_class_prob_rows = None
+    if use_prob_vector:
+        raw_prob_vec = prob_vector_model.predict(X_test)
+        surrogate_class_prob_rows = _normalize_probability_rows(raw_prob_vec)
+        calibration_method = str(prob_obj_meta.get("calibration_method", "none"))
+        if calibration_method == "temperature":
+            temperature = float(prob_obj_meta.get("temperature", 1.0) or 1.0)
+            surrogate_class_prob_rows = _temperature_scale(surrogate_class_prob_rows, temperature)
+        surrogate_cls_encoded = np.argmax(surrogate_class_prob_rows, axis=1)
+    else:
+        surrogate_cls_encoded = cls_model.predict(X_test)
+        if hasattr(cls_model, "predict_proba"):
+            try:
+                surrogate_class_prob_rows = _normalize_probability_rows(cls_model.predict_proba(X_test))
+            except Exception:
+                surrogate_class_prob_rows = None
+    surrogate_cls = le.inverse_transform(np.array(surrogate_cls_encoded, dtype=int))
     surrogate_probs = reg_model.predict(X_test)
 
     gptzero_labels = []
@@ -553,11 +841,19 @@ def step_test(
         match = "MATCH" if gz_cls == sg_cls else "MISS"
 
         gz_prob = gz.get("average_generated_prob", 0.0)
+        sg_prob = float(np.clip(surrogate_probs[i], 0.0, 1.0))
+        sg_class_probs = {}
+        if surrogate_class_prob_rows is not None:
+            row_probs = surrogate_class_prob_rows[i]
+            sg_class_probs = {
+                str(cls_name): float(row_probs[j])
+                for j, cls_name in enumerate(le.classes_)
+            }
 
         gptzero_labels.append(gz_cls)
         surrogate_labels.append(sg_cls)
         gz_probs.append(gz_prob)
-        sg_probs.append(float(surrogate_probs[i]))
+        sg_probs.append(sg_prob)
 
         comparison.append({
             "sample_id": sid,
@@ -565,13 +861,14 @@ def step_test(
             "surrogate_class": sg_cls,
             "match": gz_cls == sg_cls,
             "gptzero_prob": gz_prob,
-            "surrogate_prob": float(surrogate_probs[i]),
-            "prob_error": abs(gz_prob - surrogate_probs[i]),
+            "surrogate_prob": sg_prob,
+            "surrogate_class_probabilities": sg_class_probs,
+            "prob_error": abs(gz_prob - sg_prob),
             "gptzero_confidence": gz.get("confidence_category"),
         })
 
         print(f"  {sid:30s}  GZ={gz_cls:8s} SG={sg_cls:8s} [{match}]  "
-              f"prob: GZ={gz_prob:.3f} SG={surrogate_probs[i]:.3f}")
+              f"prob: GZ={gz_prob:.3f} SG={sg_prob:.3f}")
 
     if not gptzero_labels:
         print("ERROR: No valid GPTZero results to compare.")
@@ -751,6 +1048,10 @@ def step_report(extraction_results, model_meta, test_comparison, agreement, clie
 
     cls_meta = model_meta.get("classifier", {})
     reg_meta = model_meta.get("regressor", {})
+    cls_cv = cls_meta.get("cv_balanced_accuracy")
+    cls_cv_text = f"{float(cls_cv):.1%}" if cls_cv is not None else "N/A"
+    reg_cv = reg_meta.get("cv_r2")
+    reg_cv_text = f"{float(reg_cv):.3f}" if reg_cv is not None else "N/A"
 
     report.append(f"""
 EXECUTIVE SUMMARY
@@ -765,13 +1066,13 @@ using only standard API access.
 
   Classifier:
     Type:                       {cls_meta.get('model_type', '?')}
-    CV balanced accuracy:       {cls_meta.get('cv_balanced_accuracy', 0):.1%}
+    CV balanced accuracy:       {cls_cv_text}
     Clone score (held-out):     {agreement:.1%}
     95% confidence interval:    [{ci[0]:.1%}, {ci[1]:.1%}]
 
   Regressor (avg_generated_prob):
     Type:                       {reg_meta.get('model_type', '?')}
-    CV R-squared:               {reg_meta.get('cv_r2', 0):.3f}
+    CV R-squared:               {reg_cv_text}
     Held-out MAE:               {reg_mae:.4f}
     Held-out R-squared:         {reg_r2 if reg_r2 else 'N/A'}
 
@@ -1035,6 +1336,36 @@ Examples:
     parser.add_argument("--dataset-version", default="v1", help="Dataset version under datasets/<version>")
     parser.add_argument("--output-dir", default=".", help="Base output directory for data/models/report/artifacts")
     parser.add_argument(
+        "--use-api-features",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use GPTZero API-response feature channels in training/testing.",
+    )
+    parser.add_argument(
+        "--probability-objective",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Train probability-vector surrogate objective (class_probabilities).",
+    )
+    parser.add_argument(
+        "--oversample",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable minority-class oversampling before model training.",
+    )
+    parser.add_argument(
+        "--calibration-method",
+        choices=["none", "temperature"],
+        default="temperature",
+        help="Calibration method for probability-vector outputs.",
+    )
+    parser.add_argument(
+        "--cv-repeats",
+        type=int,
+        default=3,
+        help="Repeated stratified CV repeats for classifier model selection.",
+    )
+    parser.add_argument(
         "--no-network-cache",
         action="store_true",
         help="Disable cached API responses and force fresh GPTZero calls",
@@ -1072,6 +1403,10 @@ Examples:
     if args.test_only:
         cls_model = joblib.load(MODEL_DIR / "surrogate_model.joblib")
         reg_model = joblib.load(MODEL_DIR / "surrogate_regressor.joblib")
+        prob_vector_model = None
+        prob_vector_path = MODEL_DIR / "surrogate_prob_vector.joblib"
+        if prob_vector_path.exists():
+            prob_vector_model = joblib.load(prob_vector_path)
         le = joblib.load(MODEL_DIR / "label_encoder.joblib")
         with open(MODEL_DIR / "model_meta.json") as f:
             model_meta = json.load(f)
@@ -1079,7 +1414,9 @@ Examples:
             client,
             cls_model,
             reg_model,
+            prob_vector_model,
             le,
+            model_meta=model_meta,
             delay=args.delay,
             dataset_version=args.dataset_version,
             use_network_cache=network_cache_enabled,
@@ -1090,6 +1427,7 @@ Examples:
             "model_meta": MODEL_DIR / "model_meta.json",
             "classifier_model": MODEL_DIR / "surrogate_model.joblib",
             "regressor_model": MODEL_DIR / "surrogate_regressor.joblib",
+            "prob_vector_model": MODEL_DIR / "surrogate_prob_vector.joblib",
             "label_encoder": MODEL_DIR / "label_encoder.joblib",
             "dataset_manifest": project_root / "datasets" / args.dataset_version / "manifest.json",
         }
@@ -1125,11 +1463,16 @@ Examples:
         extraction_results,
         seed=args.seed,
         run_metadata=run_metadata,
+        use_api_features=bool(args.use_api_features),
+        enable_probability_objective=bool(args.probability_objective),
+        enable_oversampling=bool(args.oversample),
+        calibration_method=str(args.calibration_method),
+        cv_repeats=int(max(1, args.cv_repeats)),
     )
     if result[0] is None:
         print("Training failed. Exiting.")
         sys.exit(1)
-    cls_model, reg_model, le, model_meta = result
+    cls_model, reg_model, prob_vector_model, le, model_meta = result
 
     # Step 3: Test
     if not args.skip_test:
@@ -1137,7 +1480,9 @@ Examples:
             client,
             cls_model,
             reg_model,
+            prob_vector_model,
             le,
+            model_meta=model_meta,
             delay=args.delay,
             dataset_version=args.dataset_version,
             use_network_cache=network_cache_enabled,
@@ -1153,6 +1498,7 @@ Examples:
         "model_meta": MODEL_DIR / "model_meta.json",
         "classifier_model": MODEL_DIR / "surrogate_model.joblib",
         "regressor_model": MODEL_DIR / "surrogate_regressor.joblib",
+        "prob_vector_model": MODEL_DIR / "surrogate_prob_vector.joblib",
         "label_encoder": MODEL_DIR / "label_encoder.joblib",
         "report": REPORT_DIR / "gptzero_extraction_report.txt",
         "dataset_manifest": project_root / "datasets" / args.dataset_version / "manifest.json",

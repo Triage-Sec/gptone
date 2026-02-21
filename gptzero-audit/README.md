@@ -125,6 +125,44 @@ python main.py \
   --output-dir .
 ```
 
+Build the adaptive/quota boundary-mined dataset (`v4`) from `v2`:
+
+```bash
+python scripts/mine_boundary_probes.py \
+  --source-version v2 \
+  --target-version v4 \
+  --max-base-samples 16 \
+  --base-screen-size 48 \
+  --max-mined-samples 18 \
+  --fallback-top-k 10 \
+  --max-steps 3 \
+  --branching-factor 4 \
+  --boundary-low 0.30 \
+  --boundary-high 0.70 \
+  --tight-boundary-low 0.40 \
+  --tight-boundary-high 0.60 \
+  --adaptive-band \
+  --quota-ai 6 \
+  --quota-human 6 \
+  --quota-mixed 6
+```
+
+Run the probability-objective surrogate configuration:
+
+```bash
+python main.py \
+  --api-key YOUR_GPTZERO_API_KEY \
+  --seed 42 \
+  --dataset-version v4 \
+  --run-id run-v4-001 \
+  --output-dir . \
+  --use-api-features \
+  --probability-objective \
+  --oversample \
+  --calibration-method temperature \
+  --cv-repeats 5
+```
+
 ## Reproducibility Verification
 
 Compare two or more runs:
@@ -142,6 +180,26 @@ python scripts/verify_run.py \
   --manifest-paths \
     artifacts/run-20260220-001/run_manifest.json \
     artifacts/run-20260220-002/run_manifest.json
+```
+
+Enforce strict promotion gates (>=99% agreement, MAE/CI/per-class floors, stability):
+
+```bash
+python scripts/verify_run.py \
+  --manifest-paths \
+    artifacts/run-seed-42/run_manifest.json \
+    artifacts/run-seed-1337/run_manifest.json \
+    artifacts/run-seed-2026/run_manifest.json \
+  --enforce-promotion-targets \
+  --agreement-min 0.99 \
+  --probability-mae-max 0.02 \
+  --ci-lower-min 0.975 \
+  --per-class-min-ai 0.99 \
+  --per-class-min-human 0.95 \
+  --per-class-min-mixed 0.90 \
+  --clone-spread-max 0.02 \
+  --mae-spread-max 0.02 \
+  --require-stability-runs 3
 ```
 
 The verifier checks:
