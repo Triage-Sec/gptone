@@ -17,6 +17,7 @@ Estimated time: ~4 minutes
 """
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -28,15 +29,21 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.client import GPTZeroClient
+from src.client import API_URL, GPTZeroClient
 from src.attacks import (
-    all_attack_samples,
     all_extraction_samples,
     held_out_test_samples,
     held_out_verified_test_samples,
 )
-from src.datasource import all_verified_samples, held_out_verified_samples
+from src.datasource import all_verified_samples
 from src.features import extract_features, extract_features_batch, FEATURE_NAMES
+from src.reproducibility import (
+    RunPaths,
+    build_run_metadata,
+    configure_run_paths,
+    set_global_seed,
+    write_run_manifest,
+)
 
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.ensemble import GradientBoostingRegressor
@@ -57,22 +64,39 @@ DATA_DIR = Path("data")
 MODEL_DIR = Path("models")
 REPORT_DIR = Path("report")
 
-for d in [DATA_DIR, MODEL_DIR, REPORT_DIR]:
-    d.mkdir(exist_ok=True)
+DEFAULT_SEED = 42
+
+
+def configure_output_dirs(paths: RunPaths) -> None:
+    """Set global output directories for this run."""
+    global DATA_DIR, MODEL_DIR, REPORT_DIR
+    DATA_DIR = paths.data_dir
+    MODEL_DIR = paths.model_dir
+    REPORT_DIR = paths.report_dir
 
 
 # ====================================================================
 # STEP 1: EXTRACT
 # ====================================================================
 
-def step_extract(client, delay=0.5):
+def _text_hash(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def step_extract(
+    client,
+    delay=0.5,
+    dataset_version="v1",
+    use_network_cache=True,
+    run_metadata=None,
+):
     """Send all probes (synthetic + verified-provenance) to GPTZero."""
 
     print("\n" + "=" * 60)
     print("STEP 1: EXTRACTION")
     print("=" * 60)
 
-    samples = all_extraction_samples()
+    samples = all_extraction_samples(dataset_version=dataset_version)
     print(f"Total probe samples: {len(samples)}")
     total_words = sum(len(text.split()) for _, text in samples)
     print(f"Total words: {total_words}")
@@ -81,20 +105,38 @@ def step_extract(client, delay=0.5):
 
     ids = [s[0] for s in samples]
     texts = [s[1] for s in samples]
-
-    results = client.predict_batch(texts, ids=ids, delay=delay)
-
     out = DATA_DIR / "extraction_results.json"
-    with open(out, "w") as f:
-        json.dump({
-            "metadata": {
-                "timestamp": datetime.now().isoformat(),
-                "total_queries": len(results),
-                "total_words": total_words,
-                "api_calls": client.call_count,
-            },
-            "results": results,
-        }, f, indent=2)
+    cache_sig = {sid: _text_hash(text) for sid, text in samples}
+
+    cached_results = None
+    if use_network_cache and out.exists():
+        with open(out, "r", encoding="utf-8") as f:
+            cached = json.load(f)
+        cached_sig = (
+            cached.get("metadata", {}).get("sample_signature")
+            if isinstance(cached, dict)
+            else None
+        )
+        cached_results = cached.get("results") if isinstance(cached, dict) else None
+        if cached_sig == cache_sig and isinstance(cached_results, list):
+            print("Using cached extraction results (sample signatures match).")
+    results = cached_results
+    if results is None:
+        results = client.predict_batch(texts, ids=ids, delay=delay)
+
+        with open(out, "w") as f:
+            json.dump({
+                "metadata": {
+                    "timestamp": datetime.now().isoformat(),
+                    "total_queries": len(results),
+                    "total_words": total_words,
+                    "api_calls": client.call_count,
+                    "dataset_version": dataset_version,
+                    "sample_signature": cache_sig,
+                    "run_metadata": run_metadata or {},
+                },
+                "results": results,
+            }, f, indent=2)
 
     ok = sum(1 for r in results if "error" not in r)
     err = sum(1 for r in results if "error" in r)
@@ -109,7 +151,7 @@ def step_extract(client, delay=0.5):
     print(f"Class distribution: {dict(sorted(class_counts.items()))}")
 
     # Ground-truth accuracy for verified-provenance samples
-    verified = {s[0]: s[1] for s in all_verified_samples()}
+    verified = {s[0]: s[1] for s in all_verified_samples(dataset_version=dataset_version)}
     if verified:
         correct, total = 0, 0
         gt_labels, gptz_labels = [], []
@@ -225,7 +267,7 @@ API_RESPONSE_FEATURE_NAMES = [
 # STEP 2: TRAIN SURROGATE (Classifier + Regressor)
 # ====================================================================
 
-def step_train(results):
+def step_train(results, seed=DEFAULT_SEED, run_metadata=None):
     """
     Train surrogate models on GPTZero's outputs.
 
@@ -280,18 +322,18 @@ def step_train(results):
 
     models_cls = {
         "GradientBoosting": GradientBoostingClassifier(
-            n_estimators=200, max_depth=4, learning_rate=0.1, random_state=42
+            n_estimators=200, max_depth=4, learning_rate=0.1, random_state=seed
         ),
         "RandomForest": RandomForestClassifier(
-            n_estimators=200, max_depth=6, class_weight="balanced", random_state=42
+            n_estimators=200, max_depth=6, class_weight="balanced", random_state=seed
         ),
         "LogisticRegression": Pipeline([
             ("scaler", StandardScaler()),
-            ("lr", LogisticRegression(max_iter=2000, C=1.0, class_weight="balanced", random_state=42)),
+            ("lr", LogisticRegression(max_iter=2000, C=1.0, class_weight="balanced", random_state=seed)),
         ]),
         "SVM_RBF": Pipeline([
             ("scaler", StandardScaler()),
-            ("svm", SVC(kernel="rbf", class_weight="balanced", probability=True, random_state=42)),
+            ("svm", SVC(kernel="rbf", class_weight="balanced", probability=True, random_state=seed)),
         ]),
     }
 
@@ -305,7 +347,7 @@ def step_train(results):
     print(f"\nCross-validation ({k_cls}-fold stratified):")
     for name, model in models_cls.items():
         try:
-            skf = StratifiedKFold(n_splits=k_cls, shuffle=True, random_state=42)
+            skf = StratifiedKFold(n_splits=k_cls, shuffle=True, random_state=seed)
             scores = cross_val_score(model, X_text, y_cls, cv=skf, scoring="balanced_accuracy")
             mean_score = scores.mean()
             std_score = scores.std()
@@ -328,7 +370,7 @@ def step_train(results):
 
     models_reg = {
         "GBRegressor": GradientBoostingRegressor(
-            n_estimators=200, max_depth=4, learning_rate=0.1, random_state=42
+            n_estimators=200, max_depth=4, learning_rate=0.1, random_state=seed
         ),
         "Ridge": Pipeline([
             ("scaler", StandardScaler()),
@@ -346,7 +388,7 @@ def step_train(results):
     print(f"\nCross-validation ({k_reg}-fold):")
     for name, model in models_reg.items():
         try:
-            kf = KFold(n_splits=k_reg, shuffle=True, random_state=42)
+            kf = KFold(n_splits=k_reg, shuffle=True, random_state=seed)
             scores = cross_val_score(model, X_text, y_prob, cv=kf, scoring="r2")
             mean_score = scores.mean()
             std_score = scores.std()
@@ -384,6 +426,8 @@ def step_train(results):
         "feature_names": feat_names,
         "top_features": top_features,
         "api_response_feature_names": API_RESPONSE_FEATURE_NAMES,
+        "seed": seed,
+        "run_metadata": run_metadata or {},
         "trained_at": datetime.now().isoformat(),
     }
     with open(MODEL_DIR / "model_meta.json", "w") as f:
@@ -425,7 +469,16 @@ def _get_feature_importances(model, feat_names):
 # STEP 3: TEST SURROGATE vs GPTZERO
 # ====================================================================
 
-def step_test(client, cls_model, reg_model, le, delay=0.5):
+def step_test(
+    client,
+    cls_model,
+    reg_model,
+    le,
+    delay=0.5,
+    dataset_version="v1",
+    use_network_cache=True,
+    seed=DEFAULT_SEED,
+):
     """
     Run held-out test samples through both the surrogate and GPTZero.
     Reports:
@@ -440,8 +493,8 @@ def step_test(client, cls_model, reg_model, le, delay=0.5):
     print("=" * 60)
 
     # Combine original test samples with verified held-out samples
-    test_samples = held_out_test_samples()
-    verified_tests = held_out_verified_test_samples()
+    test_samples = held_out_test_samples(dataset_version=dataset_version)
+    verified_tests = held_out_verified_test_samples(dataset_version=dataset_version)
 
     # Merge: original (id, text) + verified (id, gt, text) -> (id, text)
     # Track ground truth separately
@@ -456,7 +509,29 @@ def step_test(client, cls_model, reg_model, le, delay=0.5):
     texts = [s[1] for s in test_samples]
 
     print("\nQuerying GPTZero on held-out set...")
-    gptzero_results = client.predict_batch(texts, ids=ids, delay=delay)
+    gptzero_cache_path = DATA_DIR / "gptzero_test_predictions.json"
+    test_signature = {sid: _text_hash(text) for sid, text in test_samples}
+    gptzero_results = None
+    if use_network_cache and gptzero_cache_path.exists():
+        with open(gptzero_cache_path, "r", encoding="utf-8") as f:
+            cached = json.load(f)
+        if cached.get("sample_signature") == test_signature and isinstance(cached.get("results"), list):
+            print("Using cached held-out GPTZero predictions.")
+            gptzero_results = cached["results"]
+
+    if gptzero_results is None:
+        gptzero_results = client.predict_batch(texts, ids=ids, delay=delay)
+        with open(gptzero_cache_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "sample_signature": test_signature,
+                    "results": gptzero_results,
+                    "dataset_version": dataset_version,
+                    "timestamp": datetime.now().isoformat(),
+                },
+                f,
+                indent=2,
+            )
 
     X_test, _ = extract_features_batch(texts)
     surrogate_cls_encoded = cls_model.predict(X_test)
@@ -545,7 +620,7 @@ def step_test(client, cls_model, reg_model, le, delay=0.5):
     print(f"  R2:   {reg_r2:.4f}")
 
     # ---- Bootstrap CI ----
-    ci_low, ci_high = _bootstrap_ci(matches, n_boot=10000, ci=0.95)
+    ci_low, ci_high = _bootstrap_ci(matches, n_boot=10000, ci=0.95, seed=seed)
     print(f"\nClone score 95% CI: [{ci_low:.1%}, {ci_high:.1%}]")
 
     # ---- Ground-truth accuracy (verified samples) ----
@@ -622,6 +697,7 @@ def step_test(client, cls_model, reg_model, le, delay=0.5):
             "regressor_mae": reg_mae,
             "regressor_r2": reg_r2 if not np.isnan(reg_r2) else None,
             "ground_truth_evaluation": gt_results,
+            "dataset_version": dataset_version,
             "total_tests": len(comparison),
             "matches": sum(matches),
             "comparisons": comparison,
@@ -632,9 +708,9 @@ def step_test(client, cls_model, reg_model, le, delay=0.5):
     return comparison, agreement
 
 
-def _bootstrap_ci(matches, n_boot=10000, ci=0.95):
+def _bootstrap_ci(matches, n_boot=10000, ci=0.95, seed=DEFAULT_SEED):
     """Bootstrap confidence interval for agreement rate."""
-    rng = np.random.RandomState(42)
+    rng = np.random.RandomState(seed)
     matches_arr = np.array(matches, dtype=float)
     boot_means = []
     for _ in range(n_boot):
@@ -938,6 +1014,8 @@ Each API call returns the following model internals:
 # ====================================================================
 
 def main():
+    project_root = Path(__file__).resolve().parent
+
     parser = argparse.ArgumentParser(
         description="GPTZero Model Extraction Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -946,12 +1024,22 @@ Examples:
   python main.py --api-key YOUR_KEY              # full pipeline
   python main.py --api-key YOUR_KEY --skip-test  # extract + train only
   python main.py --test-only --api-key YOUR_KEY  # test existing model
+  python main.py --seed 42 --dataset-version v1  # deterministic run
         """,
     )
     parser.add_argument("--api-key", help="GPTZero API key (or set GPTZERO_API_KEY)")
     parser.add_argument("--delay", type=float, default=0.5, help="Delay between API calls (s)")
     parser.add_argument("--skip-test", action="store_true", help="Skip held-out testing")
     parser.add_argument("--test-only", action="store_true", help="Only run test step with existing model")
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="Deterministic random seed")
+    parser.add_argument("--run-id", help="Optional run identifier")
+    parser.add_argument("--dataset-version", default="v1", help="Dataset version under datasets/<version>")
+    parser.add_argument("--output-dir", default=".", help="Base output directory for data/models/report/artifacts")
+    parser.add_argument(
+        "--no-network-cache",
+        action="store_true",
+        help="Disable cached API responses and force fresh GPTZero calls",
+    )
     args = parser.parse_args()
 
     api_key = args.api_key or os.environ.get("GPTZERO_API_KEY")
@@ -960,34 +1048,124 @@ Examples:
         print("Get a key at: https://app.gptzero.me/app/api")
         sys.exit(1)
 
+    set_global_seed(args.seed)
+    run_id = args.run_id or datetime.now().strftime("run-%Y%m%dT%H%M%S")
+    run_paths = configure_run_paths(Path(args.output_dir), run_id)
+    configure_output_dirs(run_paths)
+
+    run_metadata = build_run_metadata(
+        project_root=project_root,
+        seed=args.seed,
+        run_id=run_id,
+        dataset_version=args.dataset_version,
+        args=vars(args),
+        api_endpoint=API_URL,
+    )
+
+    network_cache_enabled = not args.no_network_cache
+
     client = GPTZeroClient(api_key=api_key)
+
+    agreement = 0.0
+    comparison = []
+    model_meta = {}
 
     if args.test_only:
         cls_model = joblib.load(MODEL_DIR / "surrogate_model.joblib")
         reg_model = joblib.load(MODEL_DIR / "surrogate_regressor.joblib")
         le = joblib.load(MODEL_DIR / "label_encoder.joblib")
         with open(MODEL_DIR / "model_meta.json") as f:
-            meta = json.load(f)
-        step_test(client, cls_model, reg_model, le, delay=args.delay)
+            model_meta = json.load(f)
+        comparison, agreement = step_test(
+            client,
+            cls_model,
+            reg_model,
+            le,
+            delay=args.delay,
+            dataset_version=args.dataset_version,
+            use_network_cache=network_cache_enabled,
+            seed=args.seed,
+        )
+        artifact_paths = {
+            "test_results": DATA_DIR / "test_results.json",
+            "model_meta": MODEL_DIR / "model_meta.json",
+            "classifier_model": MODEL_DIR / "surrogate_model.joblib",
+            "regressor_model": MODEL_DIR / "surrogate_regressor.joblib",
+            "label_encoder": MODEL_DIR / "label_encoder.joblib",
+            "dataset_manifest": project_root / "datasets" / args.dataset_version / "manifest.json",
+        }
+        write_run_manifest(
+            manifest_path=run_paths.manifest_path,
+            run_metadata=run_metadata,
+            artifact_paths=artifact_paths,
+            extra_metrics={
+                "mode": "test-only",
+                "clone_score": agreement,
+                "gptzero_api_calls": client.call_count,
+                "gptzero_words": client.total_words,
+            },
+        )
+        print(f"Run manifest: {run_paths.manifest_path}")
         return
 
     # Step 1: Extract
-    extraction_results = step_extract(client, delay=args.delay)
+    extraction_results = step_extract(
+        client,
+        delay=args.delay,
+        dataset_version=args.dataset_version,
+        use_network_cache=network_cache_enabled,
+        run_metadata=run_metadata,
+    )
 
     # Step 2: Train
-    result = step_train(extraction_results)
+    result = step_train(
+        extraction_results,
+        seed=args.seed,
+        run_metadata=run_metadata,
+    )
     if result[0] is None:
         print("Training failed. Exiting.")
         sys.exit(1)
-    cls_model, reg_model, le, meta = result
+    cls_model, reg_model, le, model_meta = result
 
     # Step 3: Test
-    comparison, agreement = [], 0.0
     if not args.skip_test:
-        comparison, agreement = step_test(client, cls_model, reg_model, le, delay=args.delay)
+        comparison, agreement = step_test(
+            client,
+            cls_model,
+            reg_model,
+            le,
+            delay=args.delay,
+            dataset_version=args.dataset_version,
+            use_network_cache=network_cache_enabled,
+            seed=args.seed,
+        )
 
     # Step 4: Report
-    step_report(extraction_results, meta, comparison, agreement, client)
+    step_report(extraction_results, model_meta, comparison, agreement, client)
+
+    artifact_paths = {
+        "extraction_results": DATA_DIR / "extraction_results.json",
+        "test_results": DATA_DIR / "test_results.json",
+        "model_meta": MODEL_DIR / "model_meta.json",
+        "classifier_model": MODEL_DIR / "surrogate_model.joblib",
+        "regressor_model": MODEL_DIR / "surrogate_regressor.joblib",
+        "label_encoder": MODEL_DIR / "label_encoder.joblib",
+        "report": REPORT_DIR / "gptzero_extraction_report.txt",
+        "dataset_manifest": project_root / "datasets" / args.dataset_version / "manifest.json",
+    }
+    write_run_manifest(
+        manifest_path=run_paths.manifest_path,
+        run_metadata=run_metadata,
+        artifact_paths=artifact_paths,
+        extra_metrics={
+            "mode": "full",
+            "clone_score": agreement,
+            "gptzero_api_calls": client.call_count,
+            "gptzero_words": client.total_words,
+            "skip_test": bool(args.skip_test),
+        },
+    )
 
     print(f"\n{'=' * 60}")
     print("PIPELINE COMPLETE")
@@ -996,6 +1174,7 @@ Examples:
     print(f"  Regressor:    {MODEL_DIR}/surrogate_regressor.joblib")
     print(f"  Data:         {DATA_DIR}/")
     print(f"  Report:       {REPORT_DIR}/gptzero_extraction_report.txt")
+    print(f"  Manifest:     {run_paths.manifest_path}")
     print(f"  Queries:      {client.call_count}")
     print(f"  Cost:         ~${client.total_words * 0.00015:.2f}")
     print(f"  Clone score:  {agreement:.0%} agreement")

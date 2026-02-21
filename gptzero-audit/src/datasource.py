@@ -950,3 +950,72 @@ def held_out_verified_samples():
          "has lost all meaning in her office because it happens every quarter.",
          "AI economic framing + human insurance anecdote"),
     ]
+
+
+# ====================================================================
+# DATASET-VERSIONED LOADERS (overrides legacy inline corpora above)
+# ====================================================================
+
+from typing import Dict, List, Tuple
+
+from src.dataset_io import dataset_dir, load_jsonl
+
+
+VerifiedRecord = Tuple[str, str, str, str]
+
+
+def _load_verified_records(filename: str, dataset_version: str = "v1") -> List[Dict[str, object]]:
+    path = dataset_dir(dataset_version) / filename
+    if not path.exists():
+        raise FileNotFoundError(f"Missing verified dataset file: {path}")
+    return load_jsonl(path)
+
+
+def all_verified_samples(dataset_version: str = "v1") -> List[VerifiedRecord]:
+    """
+    Returns verified training samples from `datasets/<version>/train_verified.jsonl`.
+
+    Tuple format:
+      (sample_id, ground_truth_label, text, provenance)
+    """
+    rows = _load_verified_records("train_verified.jsonl", dataset_version=dataset_version)
+    return [
+        (
+            str(r["sample_id"]),
+            str(r["ground_truth_label"]),
+            str(r["text"]),
+            str(r.get("provenance", "")),
+        )
+        for r in rows
+    ]
+
+
+def held_out_verified_samples(dataset_version: str = "v1") -> List[VerifiedRecord]:
+    """
+    Returns held-out verified samples from `datasets/<version>/test_verified.jsonl`.
+
+    Tuple format:
+      (sample_id, ground_truth_label, text, provenance)
+    """
+    rows = _load_verified_records("test_verified.jsonl", dataset_version=dataset_version)
+    return [
+        (
+            str(r["sample_id"]),
+            str(r["ground_truth_label"]),
+            str(r["text"]),
+            str(r.get("provenance", "")),
+        )
+        for r in rows
+    ]
+
+
+def verified_human_samples(dataset_version: str = "v1") -> List[VerifiedRecord]:
+    return [r for r in all_verified_samples(dataset_version=dataset_version) if r[1] == "human"]
+
+
+def verified_ai_samples(dataset_version: str = "v1") -> List[VerifiedRecord]:
+    return [r for r in all_verified_samples(dataset_version=dataset_version) if r[1] == "ai"]
+
+
+def verified_mixed_samples(dataset_version: str = "v1") -> List[VerifiedRecord]:
+    return [r for r in all_verified_samples(dataset_version=dataset_version) if r[1] == "mixed"]

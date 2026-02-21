@@ -6,3 +6,7 @@ dist/
 build/
 .venv/
 venv/
+gptzero-audit/data/
+gptzero-audit/models/
+gptzero-audit/report/
+gptzero-audit/artifacts/

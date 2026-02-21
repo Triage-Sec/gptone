@@ -1100,3 +1100,113 @@ def held_out_test_samples():
          "my wife gets home at 6. The ergonomic setup alone cost me $1,200 but "
          "my back doesn't hurt anymore so there's that."),
     ]
+
+
+# ====================================================================
+# DATASET-VERSIONED LOADERS (overrides legacy inline corpora above)
+# ====================================================================
+
+from typing import Dict, List, Optional, Tuple
+
+from src.dataset_io import dataset_dir, load_jsonl
+
+
+Sample = Tuple[str, str]
+VerifiedSample = Tuple[str, str, str]
+
+
+def _load_probe_records(dataset_version: str = "v1") -> List[Dict[str, object]]:
+    """Load synthetic probe records from versioned dataset files."""
+    path = dataset_dir(dataset_version) / "probes.jsonl"
+    if not path.exists():
+        raise FileNotFoundError(f"Missing probe dataset file: {path}")
+    return load_jsonl(path)
+
+
+def _probe_tuples(
+    prefix: Optional[str] = None,
+    collection: Optional[str] = None,
+    dataset_version: str = "v1",
+) -> List[Sample]:
+    """Filter probe records by sample prefix and/or collection."""
+    records = _load_probe_records(dataset_version)
+    out: List[Sample] = []
+    for rec in records:
+        sample_id = str(rec["sample_id"])
+        text = str(rec["text"])
+        rec_collection = str(rec.get("collection", ""))
+        if prefix and not sample_id.startswith(prefix):
+            continue
+        if collection and rec_collection != collection:
+            continue
+        out.append((sample_id, text))
+    return out
+
+
+def gradient_probes(dataset_version: str = "v1") -> List[Sample]:
+    return _probe_tuples(prefix="grad_", collection="attack_train", dataset_version=dataset_version)
+
+
+def boundary_probes(dataset_version: str = "v1") -> List[Sample]:
+    return _probe_tuples(prefix="bound_", collection="attack_train", dataset_version=dataset_version)
+
+
+def perplexity_probes(dataset_version: str = "v1") -> List[Sample]:
+    return _probe_tuples(prefix="ppl_", collection="attack_train", dataset_version=dataset_version)
+
+
+def burstiness_probes(dataset_version: str = "v1") -> List[Sample]:
+    return _probe_tuples(prefix="burst_", collection="attack_train", dataset_version=dataset_version)
+
+
+def hmm_probes(dataset_version: str = "v1") -> List[Sample]:
+    return _probe_tuples(prefix="hmm_", collection="attack_train", dataset_version=dataset_version)
+
+
+def sensitivity_probes(dataset_version: str = "v1") -> List[Sample]:
+    return _probe_tuples(prefix="sens_", collection="attack_train", dataset_version=dataset_version)
+
+
+def membership_probes(dataset_version: str = "v1") -> List[Sample]:
+    return _probe_tuples(prefix="mem_", collection="attack_train", dataset_version=dataset_version)
+
+
+def training_corpus(dataset_version: str = "v1") -> List[Sample]:
+    return _probe_tuples(prefix="train_", collection="attack_train", dataset_version=dataset_version)
+
+
+def all_attack_samples(dataset_version: str = "v1") -> List[Sample]:
+    """Returns all synthetic training probes from versioned datasets."""
+    return _probe_tuples(collection="attack_train", dataset_version=dataset_version)
+
+
+def all_extraction_samples(dataset_version: str = "v1") -> List[Sample]:
+    """
+    Returns synthetic probes + verified-provenance training samples.
+
+    Verified records include independent ground-truth labels and are sourced from
+    dataset files under `datasets/<version>/`.
+    """
+    from src.datasource import all_verified_samples
+
+    samples: List[Sample] = list(all_attack_samples(dataset_version=dataset_version))
+    for sample_id, _ground_truth, text, _provenance in all_verified_samples(dataset_version=dataset_version):
+        samples.append((sample_id, text))
+    return samples
+
+
+def held_out_test_samples(dataset_version: str = "v1") -> List[Sample]:
+    """Returns synthetic held-out evaluation samples."""
+    return _probe_tuples(collection="synthetic_holdout", dataset_version=dataset_version)
+
+
+def held_out_verified_test_samples(dataset_version: str = "v1") -> List[VerifiedSample]:
+    """Returns held-out verified tuples: (sample_id, ground_truth_label, text)."""
+    from src.datasource import held_out_verified_samples
+
+    return [
+        (sample_id, ground_truth, text)
+        for sample_id, ground_truth, text, _provenance in held_out_verified_samples(
+            dataset_version=dataset_version
+        )
+    ]
