@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.verification import verify_runs
+from src.verification import DEFAULT_PROMOTION_TARGETS, verify_runs
 
 
 def resolve_manifest_paths(run_ids: List[str], output_dir: Path) -> List[Path]:
@@ -37,6 +37,20 @@ def main() -> int:
     parser.add_argument("--clone-score-delta-max", type=float, default=0.03)
     parser.add_argument("--gptzero-accuracy-delta-max", type=float, default=0.05)
     parser.add_argument("--surrogate-accuracy-delta-max", type=float, default=0.05)
+    parser.add_argument(
+        "--enforce-promotion-targets",
+        action="store_true",
+        help="Apply strict promotion gates (agreement/MAE/CI/per-class/stability).",
+    )
+    parser.add_argument("--agreement-min", type=float, default=DEFAULT_PROMOTION_TARGETS["agreement_min"])
+    parser.add_argument("--probability-mae-max", type=float, default=DEFAULT_PROMOTION_TARGETS["probability_mae_max"])
+    parser.add_argument("--ci-lower-min", type=float, default=DEFAULT_PROMOTION_TARGETS["ci_lower_min"])
+    parser.add_argument("--per-class-min-ai", type=float, default=DEFAULT_PROMOTION_TARGETS["per_class_min"]["ai"])
+    parser.add_argument("--per-class-min-human", type=float, default=DEFAULT_PROMOTION_TARGETS["per_class_min"]["human"])
+    parser.add_argument("--per-class-min-mixed", type=float, default=DEFAULT_PROMOTION_TARGETS["per_class_min"]["mixed"])
+    parser.add_argument("--clone-spread-max", type=float, default=DEFAULT_PROMOTION_TARGETS["clone_score_spread_max"])
+    parser.add_argument("--mae-spread-max", type=float, default=DEFAULT_PROMOTION_TARGETS["mae_spread_max"])
+    parser.add_argument("--require-stability-runs", type=int, default=DEFAULT_PROMOTION_TARGETS["require_runs"])
     args = parser.parse_args()
 
     if args.manifest_paths:
@@ -53,6 +67,21 @@ def main() -> int:
             "gptzero_accuracy_delta_max": args.gptzero_accuracy_delta_max,
             "surrogate_accuracy_delta_max": args.surrogate_accuracy_delta_max,
         },
+        enforce_promotion=bool(args.enforce_promotion_targets),
+        promotion_targets={
+            "agreement_min": args.agreement_min,
+            "probability_mae_max": args.probability_mae_max,
+            "ci_lower_min": args.ci_lower_min,
+            "per_class_min": {
+                "ai": args.per_class_min_ai,
+                "human": args.per_class_min_human,
+                "mixed": args.per_class_min_mixed,
+            },
+            "clone_score_spread_max": args.clone_spread_max,
+            "mae_spread_max": args.mae_spread_max,
+            "require_runs": args.require_stability_runs,
+        },
+        require_stability_runs=args.require_stability_runs,
     )
     print(json.dumps(result, indent=2))
     return 0 if result["passed"] else 1
