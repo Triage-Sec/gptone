@@ -20,6 +20,9 @@ if [ -z "$1" ] && [ -z "$GPTZERO_API_KEY" ]; then
 fi
 
 API_KEY="${1:-$GPTZERO_API_KEY}"
+if [ -n "$1" ]; then
+    shift
+fi
 
 echo "============================================"
 echo "GPTZero Model Extraction Pipeline"
@@ -29,12 +32,16 @@ echo ""
 
 # Install deps
 echo "Installing dependencies..."
-pip install -r requirements.txt -q 2>/dev/null || pip install -r requirements.txt -q --break-system-packages 2>/dev/null
+if [ -f requirements.lock ]; then
+  pip install -r requirements.lock -q 2>/dev/null || pip install -r requirements.lock -q --break-system-packages 2>/dev/null
+else
+  pip install -r requirements.txt -q 2>/dev/null || pip install -r requirements.txt -q --break-system-packages 2>/dev/null
+fi
 echo "Done."
 echo ""
 
 # Run full pipeline
-python main.py --api-key "$API_KEY" --delay 0.5
+python main.py --api-key "$API_KEY" --delay 0.5 "$@"
 
 echo ""
 echo "============================================"
