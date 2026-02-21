@@ -813,7 +813,7 @@ def training_corpus():
 
 
 def all_attack_samples():
-    """Returns all attack probes combined."""
+    """Returns all attack probes combined (original synthetic probes)."""
     samples = []
     samples.extend(gradient_probes())
     samples.extend(boundary_probes())
@@ -824,6 +824,35 @@ def all_attack_samples():
     samples.extend(membership_probes())
     samples.extend(training_corpus())
     return samples
+
+
+def all_extraction_samples():
+    """
+    Returns combined extraction samples: synthetic probes + verified-provenance data.
+
+    Verified data provides known ground truth labels for:
+      1. Measuring GPTZero's actual false positive/negative rates
+      2. Training the surrogate on properly diverse labeled data
+    """
+    from src.datasource import all_verified_samples
+
+    samples = all_attack_samples()
+
+    for sample_id, ground_truth, text, provenance in all_verified_samples():
+        samples.append((sample_id, text))
+
+    return samples
+
+
+def held_out_verified_test_samples():
+    """
+    Held-out test set with KNOWN ground truth provenance.
+    Returns (sample_id, ground_truth_label, text) tuples.
+    """
+    from src.datasource import held_out_verified_samples
+    return [
+        (sid, gt, text) for sid, gt, text, _ in held_out_verified_samples()
+    ]
 
 
 def held_out_test_samples():

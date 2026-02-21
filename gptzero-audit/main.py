@@ -29,7 +29,13 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.client import GPTZeroClient
-from src.attacks import all_attack_samples, held_out_test_samples
+from src.attacks import (
+    all_attack_samples,
+    all_extraction_samples,
+    held_out_test_samples,
+    held_out_verified_test_samples,
+)
+from src.datasource import all_verified_samples, held_out_verified_samples
 from src.features import extract_features, extract_features_batch, FEATURE_NAMES
 
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
@@ -60,13 +66,13 @@ for d in [DATA_DIR, MODEL_DIR, REPORT_DIR]:
 # ====================================================================
 
 def step_extract(client, delay=0.5):
-    """Send all attack probes to GPTZero. Collect labeled responses."""
+    """Send all probes (synthetic + verified-provenance) to GPTZero."""
 
     print("\n" + "=" * 60)
     print("STEP 1: EXTRACTION")
     print("=" * 60)
 
-    samples = all_attack_samples()
+    samples = all_extraction_samples()
     print(f"Total probe samples: {len(samples)}")
     total_words = sum(len(text.split()) for _, text in samples)
     print(f"Total words: {total_words}")
@@ -101,6 +107,42 @@ def step_extract(client, delay=0.5):
         cls = r.get("predicted_class", "error")
         class_counts[cls] = class_counts.get(cls, 0) + 1
     print(f"Class distribution: {dict(sorted(class_counts.items()))}")
+
+    # Ground-truth accuracy for verified-provenance samples
+    verified = {s[0]: s[1] for s in all_verified_samples()}
+    if verified:
+        correct, total = 0, 0
+        gt_labels, gptz_labels = [], []
+        fp, fn = 0, 0
+        for r in results:
+            sid = r.get("sample_id", "")
+            if sid in verified and "error" not in r:
+                gt = verified[sid]
+                pred = r.get("predicted_class", "")
+                gt_labels.append(gt)
+                gptz_labels.append(pred)
+                total += 1
+                if gt == pred:
+                    correct += 1
+                if gt == "human" and pred == "ai":
+                    fp += 1
+                if gt == "ai" and pred == "human":
+                    fn += 1
+
+        if total > 0:
+            print(f"\n--- GPTZero Ground-Truth Accuracy (verified samples) ---")
+            print(f"  Samples:          {total}")
+            print(f"  Correct:          {correct} ({correct/total:.1%})")
+            print(f"  False positives:  {fp} (human labeled as AI)")
+            print(f"  False negatives:  {fn} (AI labeled as human)")
+
+            for gt_cls in sorted(set(gt_labels)):
+                cls_total = sum(1 for g in gt_labels if g == gt_cls)
+                cls_correct = sum(
+                    1 for g, p in zip(gt_labels, gptz_labels) if g == gt_cls and g == p
+                )
+                print(f"  {gt_cls:12s}  {cls_correct}/{cls_total} correct "
+                      f"({cls_correct/cls_total:.1%})")
 
     return results
 
@@ -390,14 +432,25 @@ def step_test(client, cls_model, reg_model, le, delay=0.5):
       - Per-class agreement rates (not just aggregate)
       - Regressor MAE and R2 on held-out probabilities
       - Bootstrap 95% confidence interval on clone score
+      - Ground-truth accuracy for verified-provenance test samples
     """
 
     print("\n" + "=" * 60)
     print("STEP 3: TEST SURROGATE vs GPTZERO")
     print("=" * 60)
 
+    # Combine original test samples with verified held-out samples
     test_samples = held_out_test_samples()
-    print(f"Test samples: {len(test_samples)}")
+    verified_tests = held_out_verified_test_samples()
+
+    # Merge: original (id, text) + verified (id, gt, text) -> (id, text)
+    # Track ground truth separately
+    ground_truth = {}
+    for sid, gt, text in verified_tests:
+        test_samples.append((sid, text))
+        ground_truth[sid] = gt
+
+    print(f"Test samples: {len(test_samples)} ({len(verified_tests)} with ground truth)")
 
     ids = [s[0] for s in test_samples]
     texts = [s[1] for s in test_samples]
@@ -495,6 +548,66 @@ def step_test(client, cls_model, reg_model, le, delay=0.5):
     ci_low, ci_high = _bootstrap_ci(matches, n_boot=10000, ci=0.95)
     print(f"\nClone score 95% CI: [{ci_low:.1%}, {ci_high:.1%}]")
 
+    # ---- Ground-truth accuracy (verified samples) ----
+    gt_results = {
+        "gptzero_accuracy": None,
+        "gptzero_false_positives": 0,
+        "gptzero_false_negatives": 0,
+        "surrogate_accuracy": None,
+        "per_class": {},
+    }
+
+    if ground_truth:
+        print(f"\n--- Ground-Truth Accuracy (verified provenance) ---")
+
+        gt_correct_gz, gt_correct_sg, gt_total = 0, 0, 0
+        gt_fp_gz, gt_fn_gz = 0, 0
+        gt_fp_sg, gt_fn_sg = 0, 0
+
+        for c in comparison:
+            sid = c["sample_id"]
+            if sid not in ground_truth:
+                continue
+            gt = ground_truth[sid]
+            gz_cls = c["gptzero_class"]
+            sg_cls = c["surrogate_class"]
+            gt_total += 1
+
+            if gz_cls == gt:
+                gt_correct_gz += 1
+            if sg_cls == gt:
+                gt_correct_sg += 1
+            if gt == "human" and gz_cls == "ai":
+                gt_fp_gz += 1
+            if gt == "ai" and gz_cls == "human":
+                gt_fn_gz += 1
+            if gt == "human" and sg_cls == "ai":
+                gt_fp_sg += 1
+            if gt == "ai" and sg_cls == "human":
+                gt_fn_sg += 1
+
+            gt_marker = "OK" if gz_cls == gt else "WRONG"
+            sg_marker = "OK" if sg_cls == gt else "WRONG"
+            print(f"  {sid:30s}  GT={gt:8s}  GZ={gz_cls:8s}[{gt_marker:5s}]  "
+                  f"SG={sg_cls:8s}[{sg_marker:5s}]")
+
+        if gt_total > 0:
+            gz_acc = gt_correct_gz / gt_total
+            sg_acc = gt_correct_sg / gt_total
+            print(f"\n  GPTZero accuracy vs ground truth:   {gz_acc:.1%} ({gt_correct_gz}/{gt_total})")
+            print(f"  Surrogate accuracy vs ground truth: {sg_acc:.1%} ({gt_correct_sg}/{gt_total})")
+            print(f"  GPTZero false positives (human->AI): {gt_fp_gz}")
+            print(f"  GPTZero false negatives (AI->human): {gt_fn_gz}")
+
+            gt_results.update({
+                "gptzero_accuracy": gz_acc,
+                "gptzero_false_positives": gt_fp_gz,
+                "gptzero_false_negatives": gt_fn_gz,
+                "surrogate_accuracy": sg_acc,
+                "surrogate_false_positives": gt_fp_sg,
+                "surrogate_false_negatives": gt_fn_sg,
+            })
+
     # ---- Save ----
     test_out = DATA_DIR / "test_results.json"
     with open(test_out, "w") as f:
@@ -508,6 +621,7 @@ def step_test(client, cls_model, reg_model, le, delay=0.5):
             },
             "regressor_mae": reg_mae,
             "regressor_r2": reg_r2 if not np.isnan(reg_r2) else None,
+            "ground_truth_evaluation": gt_results,
             "total_tests": len(comparison),
             "matches": sum(matches),
             "comparisons": comparison,
@@ -698,10 +812,38 @@ Each API call returns the following model internals:
   proprietary detection model.
 """)
 
+    # Ground-truth accuracy (new finding)
+    gt_eval = test_data.get("ground_truth_evaluation", {})
+    gz_acc = gt_eval.get("gptzero_accuracy")
+    gz_fp = gt_eval.get("gptzero_false_positives", 0)
+    gz_fn = gt_eval.get("gptzero_false_negatives", 0)
+
+    if gz_acc is not None:
+        report.append("FINDING 5: GPTZERO FALSE POSITIVE RATE (VERIFIED PROVENANCE)")
+        report.append("-" * 70)
+        report.append(f"""
+  Using text with independently verified authorship provenance
+  (pre-ChatGPT human writing from public archives, and known
+  AI-generated text), we measure GPTZero's actual accuracy:
+
+    GPTZero accuracy:          {gz_acc:.1%}
+    False positives:           {gz_fp} (human text labeled as AI)
+    False negatives:           {gz_fn} (AI text labeled as human)
+
+  False positives represent human-authored text that GPTZero
+  incorrectly classifies as AI-generated. These are real texts
+  from Reddit, blogs, news articles, and reviews published before
+  ChatGPT's launch in November 2022 -- they cannot be AI-generated.
+
+  This false positive rate has direct consequences: students
+  falsely accused of cheating, writers wrongly flagged, and
+  erosion of trust in AI detection as a reliable signal.
+""")
+
     # Per-class agreement
     per_class = test_data.get("per_class_agreement", {})
     if per_class:
-        report.append("FINDING 5: PER-CLASS CLONE ACCURACY")
+        report.append("FINDING 6: PER-CLASS CLONE ACCURACY")
         report.append("-" * 70)
         report.append("")
         for cls, rate in sorted(per_class.items()):
@@ -709,7 +851,7 @@ Each API call returns the following model internals:
         report.append("")
 
     # Clone validation
-    report.append("FINDING 6: SURROGATE MODEL VALIDATION (HELD-OUT)")
+    report.append("FINDING 7: SURROGATE MODEL VALIDATION (HELD-OUT)")
     report.append("-" * 70)
     report.append(f"\n  Aggregate agreement: {agreement:.1%} (95% CI: [{ci[0]:.1%}, {ci[1]:.1%}])")
     report.append(f"  Regressor MAE: {reg_mae:.4f}")
