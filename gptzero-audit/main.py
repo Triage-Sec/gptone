@@ -140,7 +140,7 @@ def step_train(results):
             n_estimators=200, max_depth=6, random_state=42
         ),
         "LogisticRegression": LogisticRegression(
-            max_iter=2000, multi_class="multinomial", C=1.0, random_state=42
+            max_iter=2000, C=1.0, random_state=42
         ),
     }
     
