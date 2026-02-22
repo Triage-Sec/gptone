@@ -1,0 +1,18 @@
+[
+  {
+    "path": "/absolute/path/to/human_archive.jsonl",
+    "format": "jsonl",
+    "text_field": "text",
+    "id_field": "id",
+    "ground_truth_label": "human",
+    "stratum": "human_pre_llm",
+    "source": "human_archive"
+  },
+  {
+    "path": "/absolute/path/to/ai_outputs",
+    "format": "txt_dir",
+    "ground_truth_label": "ai",
+    "stratum": "ai_instructional",
+    "source": "ai_outputs_batch"
+  }
+]

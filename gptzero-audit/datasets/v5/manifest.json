@@ -1,0 +1,88 @@
+{
+  "dataset_version": "v5",
+  "frozen_at_utc": "2026-02-21T05:42:48.396426+00:00",
+  "base_dataset_version": "v4",
+  "schema": {
+    "strata": [
+      "human_pre_llm",
+      "human_conversational",
+      "ai_instructional",
+      "ai_formal",
+      "mixed_blended",
+      "boundary_near"
+    ],
+    "pattern_eval_fields": [
+      "sample_id",
+      "text",
+      "ground_truth_label",
+      "stratum",
+      "source",
+      "provenance",
+      "split"
+    ]
+  },
+  "build_config": {
+    "target_per_stratum": 120,
+    "variants_per_augmented_base": 3,
+    "seed": 1337,
+    "external_corpus_config": null,
+    "external_record_count": 0
+  },
+  "files": {
+    "probes.jsonl": {
+      "sha256": "e70f57c583edda08c1463891a96904d1d8d3719321307e0af48f09798c18f98a",
+      "record_count": 157
+    },
+    "train_verified.jsonl": {
+      "sha256": "d4ee7a0ea92e6969237904bcfeb9c448d7f0444c046348cf7e741ca8cbe4f999",
+      "record_count": 36
+    },
+    "test_verified.jsonl": {
+      "sha256": "c02d1616ea2b7e7ed4a6d4d9b4e764878ee153de8e02d9301e096e4fdc2f3bfb",
+      "record_count": 13
+    },
+    "pattern_eval.jsonl": {
+      "sha256": "cccef3bd73e54a56664b30f38ca9d29dfe3e458f30d069a57493fe4f336ba458",
+      "record_count": 720
+    }
+  },
+  "counts": {
+    "probes_by_stratum": {
+      "ai_formal": 8,
+      "ai_instructional": 63,
+      "boundary_near": 56,
+      "human_conversational": 8,
+      "mixed_blended": 22
+    },
+    "train_verified_by_label": {
+      "ai": 12,
+      "human": 18,
+      "mixed": 6
+    },
+    "test_verified_by_label": {
+      "ai": 5,
+      "human": 5,
+      "mixed": 3
+    },
+    "pattern_eval_by_stratum": {
+      "ai_formal": 120,
+      "ai_instructional": 120,
+      "boundary_near": 120,
+      "human_conversational": 120,
+      "human_pre_llm": 120,
+      "mixed_blended": 120
+    },
+    "pattern_eval_by_label": {
+      "None": 540,
+      "ai": 25,
+      "human": 120,
+      "mixed": 35
+    }
+  },
+  "notes": {
+    "probes": "Copied from source version and annotated with stratum.",
+    "train_verified": "Copied from source version and annotated with stratum.",
+    "test_verified": "Copied from source version and annotated with stratum.",
+    "pattern_eval": "Balanced corpus matrix with deterministic augmentation for empirical pattern testing."
+  }
+}
