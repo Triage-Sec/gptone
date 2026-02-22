@@ -1,0 +1,11 @@
+{
+  "model_dir": "/artifacts/gptzero-audit/neural_surrogate",
+  "output_dir": "/artifacts/gptzero-audit",
+  "dataset_version": "v5",
+  "max_base_per_stratum": 20,
+  "variants_per_base": 6,
+  "boundary_focus": true,
+  "delay": 0.25,
+  "batch_size": 96,
+  "cache_name": "neural_pattern_cache.json"
+}

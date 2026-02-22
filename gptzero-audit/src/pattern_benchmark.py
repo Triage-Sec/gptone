@@ -137,6 +137,7 @@ def select_boundary_variants(
     predicted_probs: Sequence[float],
     *,
     target_count: int,
+    kind_min_counts: Mapping[str, int] | None = None,
 ) -> List[Dict[str, object]]:
     """
     Select variants closest to the decision boundary with directional diversity.
@@ -144,7 +145,8 @@ def select_boundary_variants(
     The selector keeps the identity variant (when present), then prefers:
       1) one variant below base probability,
       2) one variant above base probability,
-      3) remaining variants nearest to 0.5 with perturbation-kind diversity.
+      3) optional per-kind minimum quotas,
+      4) remaining variants nearest to 0.5 with perturbation-kind diversity.
     """
     if len(variants) != len(predicted_probs):
         raise ValueError("variants and predicted_probs must have identical length.")
@@ -156,6 +158,18 @@ def select_boundary_variants(
     rows = [dict(v) for v in variants]
     probs = [float(p) for p in predicted_probs]
     n = len(rows)
+    normalized_min_counts: Dict[str, int] = {}
+    if isinstance(kind_min_counts, Mapping):
+        for raw_kind, raw_count in kind_min_counts.items():
+            kind = str(raw_kind).strip()
+            if not kind:
+                continue
+            try:
+                count = int(raw_count)
+            except (TypeError, ValueError):
+                continue
+            if count > 0:
+                normalized_min_counts[kind] = count
 
     base_idx = 0
     for idx, row in enumerate(rows):
@@ -181,6 +195,29 @@ def select_boundary_variants(
         remaining = [idx for idx in remaining if idx != pick]
 
     used_kinds = {str(rows[idx].get("perturbation_kind", "")) for idx in selected}
+    if normalized_min_counts and len(selected) < target_count:
+        selected_set = set(selected)
+        for kind, min_count in sorted(normalized_min_counts.items(), key=lambda item: (-item[1], item[0])):
+            if len(selected) >= target_count:
+                break
+            already = sum(1 for idx in selected if str(rows[idx].get("perturbation_kind", "")) == kind)
+            need = max(0, int(min_count) - already)
+            if need <= 0:
+                continue
+            candidates = [
+                idx
+                for idx in remaining
+                if idx not in selected_set and str(rows[idx].get("perturbation_kind", "")) == kind
+            ]
+            for idx in sorted(candidates, key=boundary_key):
+                if len(selected) >= target_count or need <= 0:
+                    break
+                selected.append(idx)
+                selected_set.add(idx)
+                used_kinds.add(kind)
+                need -= 1
+        remaining = [idx for idx in remaining if idx not in selected_set]
+
     for prefer_novel in (True, False):
         if len(selected) >= target_count:
             break
@@ -292,3 +329,64 @@ def summarize_prediction_rows(rows: Iterable[Mapping[str, object]]) -> Dict[str,
         "variant_count": len(materialized),
         "base_sample_count": len({str(r.get("base_sample_id", "")) for r in materialized}),
     }
+
+
+def summarize_prediction_rows_by_stratum_kind(
+    rows: Iterable[Mapping[str, object]],
+) -> Dict[str, Dict[str, Dict[str, float]]]:
+    """
+    Summarize prediction rows by stratum and perturbation kind.
+
+    Transition agreement at this granularity is computed by comparing each
+    non-base row against its sample's base row.
+    """
+    materialized = [dict(r) for r in rows]
+    base_by_sample: Dict[str, Mapping[str, object]] = {}
+    grouped: MutableMapping[str, MutableMapping[str, List[Dict[str, object]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for row in materialized:
+        sample_id = str(row.get("base_sample_id", ""))
+        if int(row.get("variant_order", 0)) == 0 and sample_id and sample_id not in base_by_sample:
+            base_by_sample[sample_id] = row
+        stratum = str(row.get("stratum", "unknown"))
+        kind = str(row.get("perturbation_kind", "unknown"))
+        grouped[stratum][kind].append(row)
+
+    def summarize_one(chunk: Sequence[Mapping[str, object]]) -> Dict[str, float]:
+        matches = [1.0 if bool(r.get("match", False)) else 0.0 for r in chunk]
+        abs_err = [
+            abs(float(r.get("gptzero_prob", 0.0) or 0.0) - float(r.get("surrogate_prob", 0.0) or 0.0))
+            for r in chunk
+        ]
+        gz_probs = [float(r.get("gptzero_prob", 0.0) or 0.0) for r in chunk]
+        sg_probs = [float(r.get("surrogate_prob", 0.0) or 0.0) for r in chunk]
+
+        transition_flags: List[float] = []
+        for row in chunk:
+            order = int(row.get("variant_order", 0))
+            if order <= 0:
+                continue
+            sample_id = str(row.get("base_sample_id", ""))
+            base = base_by_sample.get(sample_id)
+            if base is None:
+                continue
+            d_gz = float(row.get("gptzero_prob", 0.0) or 0.0) - float(base.get("gptzero_prob", 0.0) or 0.0)
+            d_sg = float(row.get("surrogate_prob", 0.0) or 0.0) - float(base.get("surrogate_prob", 0.0) or 0.0)
+            transition_flags.append(1.0 if _sign(d_gz) == _sign(d_sg) else 0.0)
+
+        return {
+            "agreement_rate": _safe_mean(matches),
+            "probability_mae": _safe_mean(abs_err),
+            "transition_agreement": _safe_mean(transition_flags),
+            "probability_js_divergence": _js_divergence(gz_probs, sg_probs),
+            "sample_count": float(len(chunk)),
+            "transition_sample_count": float(len(transition_flags)),
+        }
+
+    out: Dict[str, Dict[str, Dict[str, float]]] = {}
+    for stratum, by_kind in sorted(grouped.items()):
+        out[stratum] = {}
+        for kind, chunk in sorted(by_kind.items()):
+            out[stratum][kind] = summarize_one(chunk)
+    return out

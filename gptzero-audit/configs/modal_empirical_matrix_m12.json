@@ -1,0 +1,138 @@
+{
+  "runs": [
+    {
+      "run_id": "M11-seed-42",
+      "seed": 42,
+      "dataset_version": "v5",
+      "delay": 0.3,
+      "output_dir": "/artifacts/gptzero-audit/m11",
+      "use_api_features": true,
+      "probability_objective": true,
+      "oversample": true,
+      "calibration_method": "temperature",
+      "cv_repeats": 5
+    },
+    {
+      "run_id": "M11-seed-1337",
+      "seed": 1337,
+      "dataset_version": "v5",
+      "delay": 0.3,
+      "output_dir": "/artifacts/gptzero-audit/m11",
+      "use_api_features": true,
+      "probability_objective": true,
+      "oversample": true,
+      "calibration_method": "temperature",
+      "cv_repeats": 5
+    },
+    {
+      "run_id": "M11-seed-2026",
+      "seed": 2026,
+      "dataset_version": "v5",
+      "delay": 0.3,
+      "output_dir": "/artifacts/gptzero-audit/m11",
+      "use_api_features": true,
+      "probability_objective": true,
+      "oversample": true,
+      "calibration_method": "temperature",
+      "cv_repeats": 5
+    }
+  ],
+  "pattern_benchmark": {
+    "dataset_version": "v5",
+    "max_base_per_stratum": 24,
+    "variants_per_base": 6,
+    "candidate_multiplier": 6,
+    "boundary_focus": true,
+    "blend_min_samples": 30,
+    "blend_fit_split": "all",
+    "blend_mae_weight": 0.4,
+    "blend_transition_weight": 0.6,
+    "stratum_calibration": "affine",
+    "calibration_min_samples": 40,
+    "calibration_fit_split": "base",
+    "transition_calibration": "delta_affine",
+    "transition_min_samples": 30,
+    "transition_fit_split": "all",
+    "transition_shrinkage": 220.0,
+    "transition_stratum_min_samples": 120,
+    "transition_allowed_strata": [
+      "boundary_near",
+      "ai_formal"
+    ],
+    "transition_slope_min": -0.8,
+    "transition_slope_max": 0.8,
+    "transition_intercept_min": -0.12,
+    "transition_intercept_max": 0.12,
+    "transition_low_support_shrinkage_multiplier": 4.0,
+    "sentence_aux_weight": 0.1,
+    "boundary_score_reg_weight": 0.7,
+    "boundary_score_reg_weight_by_stratum": {
+      "human_pre_llm": 0.55,
+      "human_conversational": 0.5,
+      "boundary_near": 0.75,
+      "ai_formal": 0.7
+    },
+    "variant_kind_quotas": {
+      "toward_ai": 2,
+      "toward_human": 2
+    },
+    "variant_kind_quotas_by_stratum": {
+      "human_pre_llm": {
+        "toward_ai": 2,
+        "toward_human": 2,
+        "shuffle_sentences": 1
+      },
+      "human_conversational": {
+        "toward_ai": 2,
+        "toward_human": 2,
+        "drop_sentence": 1
+      },
+      "boundary_near": {
+        "toward_ai": 2,
+        "toward_human": 2
+      }
+    },
+    "query_batch_size": 96,
+    "cache_flush_every": 1,
+    "delay": 0.25
+  },
+  "verify": {
+    "enabled": true,
+    "output_dir": "/artifacts/gptzero-audit/m11",
+    "enforce_promotion": true,
+    "enforce_pattern": true,
+    "require_stability_runs": 3,
+    "manifest_settle_retries": 2,
+    "manifest_settle_wait_seconds": 2.0,
+    "promotion_targets": {
+      "agreement_min": 0.99,
+      "probability_mae_max": 0.02,
+      "ci_lower_min": 0.975,
+      "per_class_min": {
+        "ai": 0.99,
+        "human": 0.95,
+        "mixed": 0.9
+      },
+      "clone_score_spread_max": 0.02,
+      "mae_spread_max": 0.02,
+      "require_runs": 3
+    },
+    "pattern_targets": {
+      "overall_agreement_min": 0.99,
+      "overall_probability_mae_max": 0.02,
+      "overall_transition_agreement_min": 0.97,
+      "stratum_agreement_min": 0.97,
+      "stratum_probability_mae_max": 0.03,
+      "stratum_transition_agreement_min": 0.94,
+      "stratum_min_samples": 30,
+      "required_strata": [
+        "human_pre_llm",
+        "human_conversational",
+        "ai_instructional",
+        "ai_formal",
+        "mixed_blended",
+        "boundary_near"
+      ]
+    }
+  }
+}

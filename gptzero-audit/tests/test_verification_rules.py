@@ -20,6 +20,7 @@ def _write_manifest(
     per_class_mixed: float = 0.8,
     per_class_ai: float = 0.95,
     pattern_summary: dict | None = None,
+    pattern_stratum_kind: dict | None = None,
 ) -> Path:
     data_dir = path.parent / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -52,6 +53,8 @@ def _write_manifest(
         pattern_payload = {
             "summary": pattern_summary,
         }
+        if pattern_stratum_kind is not None:
+            pattern_payload["stratum_kind_summary"] = pattern_stratum_kind
         pattern_path.write_text(json.dumps(pattern_payload), encoding="utf-8")
         artifacts["pattern_benchmark"] = {
             "path": str(pattern_path),
@@ -296,6 +299,53 @@ class VerificationRulesTest(unittest.TestCase):
             self.assertFalse(result["passed"])
             pattern_check = [c for c in result["checks"] if c["name"] == "pattern_targets_met"][0]
             self.assertFalse(pattern_check["passed"])
+
+    def test_verify_runs_reports_ranked_pattern_gate_deficits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            pattern = self._passing_pattern_summary()
+            pattern["overall"]["transition_agreement"] = 0.80
+            pattern["strata"]["human_pre_llm"]["transition_agreement"] = 0.70
+            stratum_kind = {
+                "human_pre_llm": {
+                    "toward_ai": {
+                        "agreement_rate": 0.8,
+                        "probability_mae": 0.08,
+                        "transition_agreement": 0.6,
+                        "sample_count": 80,
+                    }
+                }
+            }
+            m1 = _write_manifest(
+                base / "m1.json",
+                "abc",
+                0.995,
+                0.45,
+                0.40,
+                pattern_summary=pattern,
+                pattern_stratum_kind=stratum_kind,
+            )
+            m2 = _write_manifest(
+                base / "m2.json",
+                "abc",
+                0.995,
+                0.45,
+                0.40,
+                pattern_summary=pattern,
+                pattern_stratum_kind=stratum_kind,
+            )
+            result = verify_runs(
+                manifest_paths=[m1, m2],
+                enforce_pattern=True,
+                pattern_targets={"stratum_min_samples": 30},
+            )
+            pattern_check = [c for c in result["checks"] if c["name"] == "pattern_targets_met"][0]
+            self.assertFalse(pattern_check["passed"])
+            deficits = pattern_check["details"]["runs"][0]["gate_deficits"]
+            self.assertGreater(len(deficits), 0)
+            # Top deficits should include blocking strata or stratum-kind entries.
+            self.assertTrue(any(d.get("scope") in {"stratum", "stratum_kind"} for d in deficits[:3]))
+            self.assertTrue(any(bool(d.get("blocking", False)) for d in deficits))
 
 
 if __name__ == "__main__":

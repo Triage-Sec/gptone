@@ -12,7 +12,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Mapping, MutableMapping, Sequence, Tuple
+from typing import Dict, List, Mapping, MutableMapping, Sequence, Set, Tuple
 
 import joblib
 import numpy as np
@@ -30,7 +30,9 @@ from src.pattern_benchmark import (
     generate_variants,
     select_boundary_variants,
     summarize_prediction_rows,
+    summarize_prediction_rows_by_stratum_kind,
 )
+from src.verification import DEFAULT_PATTERN_TARGETS
 
 
 def _normalize_prob_rows(arr: np.ndarray) -> np.ndarray:
@@ -222,6 +224,50 @@ def _response_sentence_mean_probability(response: Mapping[str, object]) -> float
     return 0.5
 
 
+def _sign(value: float, *, eps: float = 1e-6) -> int:
+    if abs(float(value)) <= eps:
+        return 0
+    return 1 if value > 0 else -1
+
+
+def _transition_sign_error(
+    *,
+    rows: Sequence[Mapping[str, object]],
+    idxs: Sequence[int],
+    gptzero_probs: np.ndarray,
+    surrogate_probs: np.ndarray,
+) -> float:
+    if not idxs:
+        return 0.0
+    included: Set[int] = set(int(i) for i in idxs)
+    by_sample: MutableMapping[str, List[int]] = defaultdict(list)
+    for idx in included:
+        sample_id = str(rows[idx].get("base_sample_id", ""))
+        by_sample[sample_id].append(idx)
+
+    flags: List[float] = []
+    for sample_id, members in by_sample.items():
+        if not sample_id:
+            continue
+        ordered = sorted(members, key=lambda i: int(rows[i].get("variant_order", 0)))
+        if not ordered:
+            continue
+        base_idx = next((i for i in ordered if int(rows[i].get("variant_order", 0)) == 0), None)
+        if base_idx is None:
+            continue
+        base_gz = float(gptzero_probs[base_idx])
+        base_sg = float(surrogate_probs[base_idx])
+        for idx in ordered:
+            if idx == base_idx:
+                continue
+            d_gz = float(gptzero_probs[idx]) - base_gz
+            d_sg = float(surrogate_probs[idx]) - base_sg
+            flags.append(1.0 if _sign(d_gz) == _sign(d_sg) else 0.0)
+    if not flags:
+        return 0.0
+    return float(1.0 - np.mean(flags))
+
+
 def _surrogate_predict(
     *,
     x: np.ndarray,
@@ -270,38 +316,57 @@ def _fit_stratum_blend_weights(
     class_expected_probs: np.ndarray,
     min_samples: int,
     fit_split: str,
+    mae_weight: float,
+    transition_weight: float,
 ) -> Dict[str, object]:
     alphas = [i / 10.0 for i in range(11)]
+    w_mae = max(0.0, float(mae_weight))
+    w_transition = max(0.0, float(transition_weight))
+    if w_mae <= 0.0 and w_transition <= 0.0:
+        w_mae = 1.0
 
-    def _indices_for_group(group_rows: Sequence[Mapping[str, object]]) -> List[int]:
+    def _indices_for_group() -> List[int]:
         if fit_split == "all":
-            return list(range(len(group_rows)))
+            return list(range(len(rows)))
         return [
             idx
-            for idx, row in enumerate(group_rows)
+            for idx, row in enumerate(rows)
             if int(row.get("variant_order", 0)) == 0
         ]
 
-    def _best_alpha(idxs: Sequence[int]) -> float:
+    def _best_alpha(idxs: Sequence[int]) -> Tuple[float, float, float, float]:
         if not idxs:
-            return 0.7
+            return 0.7, 0.0, 0.0, 0.0
         best_alpha = 0.7
+        best_objective = float("inf")
         best_mae = float("inf")
+        best_transition_error = float("inf")
         gz = gptzero_probs[list(idxs)]
         reg = reg_probs[list(idxs)]
         cls = class_expected_probs[list(idxs)]
         for alpha in alphas:
-            pred = np.clip(alpha * reg + (1.0 - alpha) * cls, 0.0, 1.0)
+            pred_all = np.clip(alpha * reg_probs + (1.0 - alpha) * class_expected_probs, 0.0, 1.0)
+            pred = pred_all[list(idxs)]
             mae = float(np.mean(np.abs(gz - pred)))
-            if mae < best_mae:
-                best_mae = mae
+            transition_error = _transition_sign_error(
+                rows=rows,
+                idxs=idxs,
+                gptzero_probs=gptzero_probs,
+                surrogate_probs=pred_all,
+            )
+            objective = w_mae * mae + w_transition * transition_error
+            if objective < best_objective:
+                best_objective = objective
                 best_alpha = alpha
-        return float(best_alpha)
+                best_mae = mae
+                best_transition_error = transition_error
+        return float(best_alpha), float(best_objective), float(best_mae), float(best_transition_error)
 
-    global_idxs = _indices_for_group(rows)
-    default_alpha = _best_alpha(global_idxs)
+    global_idxs = _indices_for_group()
+    default_alpha, default_objective, default_mae, default_transition_error = _best_alpha(global_idxs)
 
     by_stratum: Dict[str, float] = {}
+    objective_by_stratum: Dict[str, Dict[str, float]] = {}
     fit_counts: Dict[str, int] = {}
     grouped: MutableMapping[str, List[int]] = defaultdict(list)
     for idx, row in enumerate(rows):
@@ -313,11 +378,25 @@ def _fit_stratum_blend_weights(
         fit_counts[stratum] = len(idxs)
         if len(idxs) < min_samples:
             continue
-        by_stratum[stratum] = _best_alpha(idxs)
+        alpha, objective, mae, transition_error = _best_alpha(idxs)
+        by_stratum[stratum] = alpha
+        objective_by_stratum[stratum] = {
+            "objective": objective,
+            "probability_mae": mae,
+            "transition_sign_error": transition_error,
+        }
 
     return {
         "default_alpha": default_alpha,
         "by_stratum": by_stratum,
+        "objective": {
+            "mae_weight": w_mae,
+            "transition_weight": w_transition,
+            "default_objective": default_objective,
+            "default_probability_mae": default_mae,
+            "default_transition_sign_error": default_transition_error,
+            "by_stratum": objective_by_stratum,
+        },
         "fit_counts": fit_counts,
         "fit_split": fit_split,
         "min_samples": int(min_samples),
@@ -442,17 +521,30 @@ def _fit_transition_delta_calibration(
     min_samples: int,
     fit_split: str,
     shrinkage: float,
+    stratum_min_samples: int,
+    allowed_strata: Sequence[str] | None,
+    slope_bounds: Tuple[float, float],
+    intercept_bounds: Tuple[float, float],
+    low_support_shrinkage_multiplier: float,
 ) -> Dict[str, object]:
+    slope_lo, slope_hi = sorted((float(slope_bounds[0]), float(slope_bounds[1])))
+    intercept_lo, intercept_hi = sorted((float(intercept_bounds[0]), float(intercept_bounds[1])))
+    allowed: Set[str] = set()
+    if allowed_strata:
+        allowed = {str(item).strip() for item in allowed_strata if str(item).strip()}
+    base_shrinkage = max(1.0, float(shrinkage))
+    low_support_multiplier = max(1.0, float(low_support_shrinkage_multiplier))
+
     def _fit_coefficients(samples: Sequence[Tuple[float, float]]) -> Tuple[float, float]:
         if not samples:
             return 1.0, 0.0
         x = np.array([s[0] for s in samples], dtype=float)
         y = np.array([s[1] for s in samples], dtype=float)
         if len(x) < 2 or float(np.std(x)) < 1e-8:
-            return 0.0, float(np.clip(np.mean(y), -0.6, 0.6))
+            return 0.0, float(np.clip(np.mean(y), intercept_lo, intercept_hi))
         slope, intercept = np.polyfit(x, y, 1)
-        slope = float(np.clip(slope, -3.0, 3.0))
-        intercept = float(np.clip(intercept, -0.6, 0.6))
+        slope = float(np.clip(slope, slope_lo, slope_hi))
+        intercept = float(np.clip(intercept, intercept_lo, intercept_hi))
         return slope, intercept
 
     def _shrink(
@@ -467,12 +559,19 @@ def _fit_transition_delta_calibration(
         weight = float(count) / (float(count) + max(1.0, float(shrink)))
         out_slope = weight * float(slope) + (1.0 - weight) * float(default_slope)
         out_intercept = weight * float(intercept) + (1.0 - weight) * float(default_intercept)
-        return float(np.clip(out_slope, -3.0, 3.0)), float(np.clip(out_intercept, -0.6, 0.6))
+        return float(np.clip(out_slope, slope_lo, slope_hi)), float(np.clip(out_intercept, intercept_lo, intercept_hi))
+
+    def _effective_shrink(count: int) -> float:
+        threshold = max(int(min_samples) * 2, int(stratum_min_samples))
+        if int(count) < max(1, threshold):
+            return base_shrinkage * low_support_multiplier
+        return base_shrinkage
 
     base_by_sample, by_sample = _base_index_maps(rows)
     all_samples: List[Tuple[float, float]] = []
     by_kind: MutableMapping[str, List[Tuple[float, float]]] = defaultdict(list)
     by_stratum_kind: MutableMapping[str, List[Tuple[float, float]]] = defaultdict(list)
+    stratum_support_counts: MutableMapping[str, int] = defaultdict(int)
 
     for sample_id, idxs in by_sample.items():
         base_idx = base_by_sample.get(sample_id)
@@ -490,12 +589,15 @@ def _fit_transition_delta_calibration(
                 continue
             kind = str(rows[idx].get("perturbation_kind", "unknown"))
             stratum = str(rows[idx].get("stratum", "unknown"))
+            if allowed and stratum not in allowed:
+                continue
             raw_delta = float(raw_probs[idx]) - base_raw
             gz_delta = float(gptzero_probs[idx]) - base_gz
             payload = (raw_delta, gz_delta)
             all_samples.append(payload)
             by_kind[kind].append(payload)
             by_stratum_kind[f"{stratum}::{kind}"].append(payload)
+            stratum_support_counts[stratum] += 1
 
     default_slope, default_intercept = _fit_coefficients(all_samples)
     kind_params: Dict[str, Dict[str, float]] = {}
@@ -513,12 +615,15 @@ def _fit_transition_delta_calibration(
             count=len(samples),
             default_slope=default_slope,
             default_intercept=default_intercept,
-            shrink=shrinkage,
+            shrink=_effective_shrink(len(samples)),
         )
         kind_params[kind] = {"slope": float(slope), "intercept": float(intercept)}
 
     for skey, samples in by_stratum_kind.items():
         fit_counts[f"stratum_kind::{skey}"] = len(samples)
+        stratum, _, _ = skey.partition("::")
+        if int(stratum_support_counts.get(stratum, 0)) < int(max(1, stratum_min_samples)):
+            continue
         if len(samples) < min_samples:
             continue
         slope, intercept = _fit_coefficients(samples)
@@ -528,7 +633,7 @@ def _fit_transition_delta_calibration(
             count=len(samples),
             default_slope=default_slope,
             default_intercept=default_intercept,
-            shrink=shrinkage,
+            shrink=_effective_shrink(len(samples)),
         )
         stratum_kind_params[skey] = {"slope": float(slope), "intercept": float(intercept)}
 
@@ -539,7 +644,13 @@ def _fit_transition_delta_calibration(
         "fit_counts": fit_counts,
         "fit_split": fit_split,
         "min_samples": int(min_samples),
-        "shrinkage": float(shrinkage),
+        "shrinkage": float(base_shrinkage),
+        "stratum_min_samples": int(max(1, stratum_min_samples)),
+        "allowed_strata": sorted(allowed) if allowed else [],
+        "slope_bounds": [slope_lo, slope_hi],
+        "intercept_bounds": [intercept_lo, intercept_hi],
+        "low_support_shrinkage_multiplier": low_support_multiplier,
+        "stratum_support_counts": {str(k): int(v) for k, v in stratum_support_counts.items()},
     }
 
 
@@ -558,6 +669,10 @@ def _apply_transition_delta_calibration(
     by_stratum_kind = calibrator.get("by_stratum_kind", {})
     if not isinstance(by_stratum_kind, dict):
         by_stratum_kind = {}
+    allowed_raw = calibrator.get("allowed_strata", [])
+    allowed: Set[str] = set()
+    if isinstance(allowed_raw, list):
+        allowed = {str(item).strip() for item in allowed_raw if str(item).strip()}
 
     slope0 = float(default.get("slope", 1.0))
     intercept0 = float(default.get("intercept", 0.0))
@@ -574,6 +689,9 @@ def _apply_transition_delta_calibration(
             if idx == base_idx:
                 continue
             stratum = str(rows[idx].get("stratum", "unknown"))
+            if allowed and stratum not in allowed:
+                out[idx] = float(np.clip(raw_probs[idx], 0.0, 1.0))
+                continue
             kind = str(rows[idx].get("perturbation_kind", "unknown"))
             key = f"{stratum}::{kind}"
             params = by_stratum_kind.get(key, by_kind.get(kind, default))
@@ -585,6 +703,62 @@ def _apply_transition_delta_calibration(
             adjusted_delta = slope * raw_delta + intercept
             out[idx] = float(np.clip(base_prob + adjusted_delta, 0.0, 1.0))
     return out
+
+
+def _build_stratum_kind_gate_diagnostics(
+    *,
+    stratum_kind_summary: Mapping[str, Mapping[str, Mapping[str, float]]],
+    targets: Mapping[str, object],
+) -> Dict[str, object]:
+    agreement_min = float(targets.get("stratum_agreement_min", 0.0) or 0.0)
+    mae_max = float(targets.get("stratum_probability_mae_max", 1.0) or 1.0)
+    transition_min = float(targets.get("stratum_transition_agreement_min", 0.0) or 0.0)
+    min_samples = int(targets.get("stratum_min_samples", 0) or 0)
+
+    ranking: List[Dict[str, object]] = []
+    for stratum, by_kind in sorted(stratum_kind_summary.items()):
+        if not isinstance(by_kind, dict):
+            continue
+        for kind, metrics in sorted(by_kind.items()):
+            if not isinstance(metrics, dict):
+                continue
+            sample_count = float(metrics.get("sample_count", 0.0) or 0.0)
+            if sample_count < float(min_samples):
+                continue
+            agreement = float(metrics.get("agreement_rate", 0.0) or 0.0)
+            mae = float(metrics.get("probability_mae", 0.0) or 0.0)
+            transition = float(metrics.get("transition_agreement", 0.0) or 0.0)
+            agreement_deficit = max(0.0, agreement_min - agreement)
+            mae_excess = max(0.0, mae - mae_max)
+            transition_deficit = max(0.0, transition_min - transition)
+            total_deficit = agreement_deficit + mae_excess + transition_deficit
+            ranking.append(
+                {
+                    "stratum": str(stratum),
+                    "perturbation_kind": str(kind),
+                    "sample_count": sample_count,
+                    "agreement_rate": agreement,
+                    "probability_mae": mae,
+                    "transition_agreement": transition,
+                    "agreement_deficit": agreement_deficit,
+                    "probability_mae_excess": mae_excess,
+                    "transition_deficit": transition_deficit,
+                    "total_deficit": total_deficit,
+                    "blocking": bool(total_deficit > 0.0),
+                }
+            )
+    ranking.sort(key=lambda item: (-float(item.get("total_deficit", 0.0)), str(item.get("stratum", "")), str(item.get("perturbation_kind", ""))))
+    blocking = [row for row in ranking if bool(row.get("blocking", False))]
+    return {
+        "targets": {
+            "stratum_agreement_min": agreement_min,
+            "stratum_probability_mae_max": mae_max,
+            "stratum_transition_agreement_min": transition_min,
+            "stratum_min_samples": min_samples,
+        },
+        "ranking": ranking,
+        "blocking": blocking,
+    }
 
 
 def _attach_to_run_manifest(output_dir: Path, run_id: str, pattern_path: Path) -> None:
@@ -618,6 +792,46 @@ def _attach_to_run_manifest(output_dir: Path, run_id: str, pattern_path: Path) -
     run_manifest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _normalize_float_mapping(raw: Mapping[str, object]) -> Dict[str, float]:
+    out: Dict[str, float] = {}
+    for key, value in raw.items():
+        name = str(key).strip()
+        if not name:
+            continue
+        try:
+            out[name] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _normalize_kind_quota_mapping(raw: Mapping[str, object]) -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    for key, value in raw.items():
+        kind = str(key).strip()
+        if not kind:
+            continue
+        try:
+            count = int(value)
+        except (TypeError, ValueError):
+            continue
+        if count > 0:
+            out[kind] = count
+    return out
+
+
+def _normalize_kind_quota_by_stratum(raw: Mapping[str, object]) -> Dict[str, Dict[str, int]]:
+    out: Dict[str, Dict[str, int]] = {}
+    for key, value in raw.items():
+        stratum = str(key).strip()
+        if not stratum or not isinstance(value, dict):
+            continue
+        normalized = _normalize_kind_quota_mapping(value)
+        if normalized:
+            out[stratum] = normalized
+    return out
+
+
 def run(
     *,
     api_key: str | None,
@@ -633,6 +847,8 @@ def run(
     cache_name: str,
     blend_min_samples: int,
     blend_fit_split: str,
+    blend_mae_weight: float,
+    blend_transition_weight: float,
     stratum_calibration: str,
     calibration_min_samples: int,
     calibration_fit_split: str,
@@ -640,7 +856,18 @@ def run(
     transition_min_samples: int,
     transition_fit_split: str,
     transition_shrinkage: float,
+    transition_stratum_min_samples: int,
+    transition_allowed_strata: Sequence[str],
+    transition_slope_min: float,
+    transition_slope_max: float,
+    transition_intercept_min: float,
+    transition_intercept_max: float,
+    transition_low_support_shrinkage_multiplier: float,
     sentence_aux_weight: float,
+    boundary_score_reg_weight: float,
+    boundary_score_reg_weight_by_stratum: Mapping[str, float],
+    variant_kind_quotas: Mapping[str, int],
+    variant_kind_quotas_by_stratum: Mapping[str, Mapping[str, int]],
     query_batch_size: int,
     cache_flush_every: int,
     run_id: str | None,
@@ -665,6 +892,10 @@ def run(
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / cache_name
     response_cache = _load_cache(cache_path) if use_network_cache else {}
+    base_boundary_reg_weight = float(np.clip(boundary_score_reg_weight, 0.0, 1.0))
+    boundary_weight_by_stratum = _normalize_float_mapping(boundary_score_reg_weight_by_stratum)
+    global_kind_quotas = _normalize_kind_quota_mapping(variant_kind_quotas)
+    kind_quotas_by_stratum = _normalize_kind_quota_by_stratum(variant_kind_quotas_by_stratum)
 
     for base in bases:
         base_id = str(base.get("sample_id", "unknown"))
@@ -690,11 +921,19 @@ def run(
                 meta=meta,
             )
             candidate_class_expected = _expected_generated_probability(candidate_prob_rows, le.classes_)
-            candidate_scores = np.clip(0.7 * candidate_reg_probs + 0.3 * candidate_class_expected, 0.0, 1.0)
+            reg_weight = float(np.clip(boundary_weight_by_stratum.get(stratum, base_boundary_reg_weight), 0.0, 1.0))
+            cls_weight = 1.0 - reg_weight
+            candidate_scores = np.clip(
+                reg_weight * candidate_reg_probs + cls_weight * candidate_class_expected,
+                0.0,
+                1.0,
+            )
+            kind_quotas = kind_quotas_by_stratum.get(stratum, global_kind_quotas)
             variants = select_boundary_variants(
                 candidates,
                 candidate_scores.tolist(),
                 target_count=max(1, variants_per_base),
+                kind_min_counts=kind_quotas,
             )
 
         for idx, var in enumerate(variants):
@@ -802,6 +1041,8 @@ def run(
         class_expected_probs=pred_aux_prob,
         min_samples=max(1, int(blend_min_samples)),
         fit_split=blend_fit_split,
+        mae_weight=float(max(0.0, blend_mae_weight)),
+        transition_weight=float(max(0.0, blend_transition_weight)),
     )
     pred_blended_prob = _apply_stratum_blend(
         rows=valid_rows,
@@ -842,6 +1083,7 @@ def run(
         "applied": False,
     }
     if transition_calibration == "delta_affine":
+        transition_allowed = [str(item).strip() for item in transition_allowed_strata if str(item).strip()]
         transition_delta = _fit_transition_delta_calibration(
             rows=valid_rows,
             gptzero_probs=gz_probs,
@@ -849,6 +1091,11 @@ def run(
             min_samples=max(1, int(transition_min_samples)),
             fit_split=transition_fit_split,
             shrinkage=max(1.0, float(transition_shrinkage)),
+            stratum_min_samples=max(1, int(transition_stratum_min_samples)),
+            allowed_strata=transition_allowed,
+            slope_bounds=(float(transition_slope_min), float(transition_slope_max)),
+            intercept_bounds=(float(transition_intercept_min), float(transition_intercept_max)),
+            low_support_shrinkage_multiplier=max(1.0, float(transition_low_support_shrinkage_multiplier)),
         )
         pred_transition_prob = _apply_transition_delta_calibration(
             rows=valid_rows,
@@ -861,6 +1108,11 @@ def run(
                 "fit_split": transition_fit_split,
                 "min_samples": int(transition_min_samples),
                 "shrinkage": float(max(1.0, transition_shrinkage)),
+                "stratum_min_samples": int(max(1, transition_stratum_min_samples)),
+                "allowed_strata": transition_allowed,
+                "slope_bounds": [float(transition_slope_min), float(transition_slope_max)],
+                "intercept_bounds": [float(transition_intercept_min), float(transition_intercept_max)],
+                "low_support_shrinkage_multiplier": float(max(1.0, transition_low_support_shrinkage_multiplier)),
                 "delta_affine": transition_delta,
             }
         )
@@ -896,6 +1148,12 @@ def run(
         )
 
     summary = summarize_prediction_rows(scored)
+    stratum_kind_summary = summarize_prediction_rows_by_stratum_kind(scored)
+    diagnostics_targets = dict(DEFAULT_PATTERN_TARGETS)
+    stratum_kind_diagnostics = _build_stratum_kind_gate_diagnostics(
+        stratum_kind_summary=stratum_kind_summary,
+        targets=diagnostics_targets,
+    )
     out_path = output_dir / "data" / "pattern_benchmark_results.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
@@ -914,6 +1172,8 @@ def run(
                     "cache_path": str(cache_path),
                     "blend_fit_split": blend_fit_split,
                     "blend_min_samples": int(blend_min_samples),
+                    "blend_mae_weight": float(max(0.0, blend_mae_weight)),
+                    "blend_transition_weight": float(max(0.0, blend_transition_weight)),
                     "sentence_aux_weight": float(np.clip(sentence_aux_weight, 0.0, 1.0)),
                     "stratum_calibration": stratum_calibration,
                     "calibration_fit_split": calibration_fit_split,
@@ -922,6 +1182,17 @@ def run(
                     "transition_fit_split": transition_fit_split,
                     "transition_min_samples": int(transition_min_samples),
                     "transition_shrinkage": float(max(1.0, transition_shrinkage)),
+                    "transition_stratum_min_samples": int(max(1, transition_stratum_min_samples)),
+                    "transition_allowed_strata": [str(item).strip() for item in transition_allowed_strata if str(item).strip()],
+                    "transition_slope_bounds": [float(transition_slope_min), float(transition_slope_max)],
+                    "transition_intercept_bounds": [float(transition_intercept_min), float(transition_intercept_max)],
+                    "transition_low_support_shrinkage_multiplier": float(
+                        max(1.0, transition_low_support_shrinkage_multiplier)
+                    ),
+                    "boundary_score_reg_weight": float(np.clip(boundary_score_reg_weight, 0.0, 1.0)),
+                    "boundary_score_reg_weight_by_stratum": _normalize_float_mapping(boundary_score_reg_weight_by_stratum),
+                    "variant_kind_quotas": _normalize_kind_quota_mapping(variant_kind_quotas),
+                    "variant_kind_quotas_by_stratum": _normalize_kind_quota_by_stratum(variant_kind_quotas_by_stratum),
                     "query_batch_size": int(max(1, query_batch_size)),
                     "cache_flush_every": int(max(1, cache_flush_every)),
                 },
@@ -929,6 +1200,11 @@ def run(
                 "calibration": calibration_info,
                 "transition_calibration": transition_info,
                 "summary": summary,
+                "stratum_kind_summary": stratum_kind_summary,
+                "diagnostics": {
+                    "targets": diagnostics_targets,
+                    "stratum_kind_gate_deficits": stratum_kind_diagnostics,
+                },
                 "rows": scored,
             },
             indent=2,
@@ -938,6 +1214,19 @@ def run(
     if run_id:
         _attach_to_run_manifest(output_dir, run_id, out_path)
     return out_path
+
+
+def _parse_json_object_arg(raw: str, *, arg_name: str) -> Dict[str, object]:
+    text = str(raw).strip()
+    if not text:
+        return {}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{arg_name} must be valid JSON object: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{arg_name} must decode to a JSON object.")
+    return payload
 
 
 def main() -> int:
@@ -963,6 +1252,18 @@ def main() -> int:
         choices=("base", "all"),
         default="base",
         help="Fit reg/class blend on base variants only or all variants.",
+    )
+    parser.add_argument(
+        "--blend-mae-weight",
+        type=float,
+        default=1.0,
+        help="Weight for MAE term when fitting reg/class blend.",
+    )
+    parser.add_argument(
+        "--blend-transition-weight",
+        type=float,
+        default=0.0,
+        help="Weight for transition-sign-error term when fitting reg/class blend.",
     )
     parser.add_argument(
         "--stratum-calibration",
@@ -1002,10 +1303,73 @@ def main() -> int:
         help="Shrink transition coefficients toward global defaults for stability.",
     )
     parser.add_argument(
+        "--transition-stratum-min-samples",
+        type=int,
+        default=80,
+        help="Minimum transition samples required per stratum before stratum-kind calibrators can activate.",
+    )
+    parser.add_argument(
+        "--transition-allowed-strata",
+        nargs="*",
+        default=[],
+        help="Optional allowlist of strata for transition delta calibration.",
+    )
+    parser.add_argument(
+        "--transition-slope-min",
+        type=float,
+        default=-2.0,
+        help="Lower bound for transition delta slope.",
+    )
+    parser.add_argument(
+        "--transition-slope-max",
+        type=float,
+        default=2.0,
+        help="Upper bound for transition delta slope.",
+    )
+    parser.add_argument(
+        "--transition-intercept-min",
+        type=float,
+        default=-0.4,
+        help="Lower bound for transition delta intercept.",
+    )
+    parser.add_argument(
+        "--transition-intercept-max",
+        type=float,
+        default=0.4,
+        help="Upper bound for transition delta intercept.",
+    )
+    parser.add_argument(
+        "--transition-low-support-shrinkage-multiplier",
+        type=float,
+        default=2.0,
+        help="Extra shrinkage multiplier for low-support transition groups.",
+    )
+    parser.add_argument(
         "--sentence-aux-weight",
         type=float,
         default=0.0,
         help="Blend weight for sentence-mean proxy into auxiliary probability (0..1).",
+    )
+    parser.add_argument(
+        "--boundary-score-reg-weight",
+        type=float,
+        default=0.7,
+        help="Base weight for regressor score in boundary candidate scoring.",
+    )
+    parser.add_argument(
+        "--boundary-score-reg-weight-by-stratum",
+        default="{}",
+        help="JSON object mapping stratum->regressor weight override for boundary scoring.",
+    )
+    parser.add_argument(
+        "--variant-kind-quotas",
+        default="{}",
+        help="JSON object mapping perturbation_kind->minimum picks during boundary selection.",
+    )
+    parser.add_argument(
+        "--variant-kind-quotas-by-stratum",
+        default="{}",
+        help="JSON object mapping stratum->{perturbation_kind: minimum picks}.",
     )
     parser.add_argument("--run-id", default=None, help="Optional run ID for manifest artifact attachment")
     parser.add_argument("--no-network-cache", action="store_true")
@@ -1022,6 +1386,21 @@ def main() -> int:
         help="How many API chunks to process before persisting network cache.",
     )
     args = parser.parse_args()
+    try:
+        boundary_score_reg_weight_by_stratum = _parse_json_object_arg(
+            args.boundary_score_reg_weight_by_stratum,
+            arg_name="--boundary-score-reg-weight-by-stratum",
+        )
+        variant_kind_quotas = _parse_json_object_arg(
+            args.variant_kind_quotas,
+            arg_name="--variant-kind-quotas",
+        )
+        variant_kind_quotas_by_stratum = _parse_json_object_arg(
+            args.variant_kind_quotas_by_stratum,
+            arg_name="--variant-kind-quotas-by-stratum",
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     out_path = run(
         api_key=args.api_key,
@@ -1037,6 +1416,8 @@ def main() -> int:
         cache_name=args.cache_name,
         blend_min_samples=args.blend_min_samples,
         blend_fit_split=args.blend_fit_split,
+        blend_mae_weight=args.blend_mae_weight,
+        blend_transition_weight=args.blend_transition_weight,
         stratum_calibration=args.stratum_calibration,
         calibration_min_samples=args.calibration_min_samples,
         calibration_fit_split=args.calibration_fit_split,
@@ -1044,7 +1425,18 @@ def main() -> int:
         transition_min_samples=args.transition_min_samples,
         transition_fit_split=args.transition_fit_split,
         transition_shrinkage=args.transition_shrinkage,
+        transition_stratum_min_samples=args.transition_stratum_min_samples,
+        transition_allowed_strata=args.transition_allowed_strata,
+        transition_slope_min=args.transition_slope_min,
+        transition_slope_max=args.transition_slope_max,
+        transition_intercept_min=args.transition_intercept_min,
+        transition_intercept_max=args.transition_intercept_max,
+        transition_low_support_shrinkage_multiplier=args.transition_low_support_shrinkage_multiplier,
         sentence_aux_weight=args.sentence_aux_weight,
+        boundary_score_reg_weight=args.boundary_score_reg_weight,
+        boundary_score_reg_weight_by_stratum=boundary_score_reg_weight_by_stratum,
+        variant_kind_quotas=variant_kind_quotas,
+        variant_kind_quotas_by_stratum=variant_kind_quotas_by_stratum,
         query_batch_size=args.query_batch_size,
         cache_flush_every=args.cache_flush_every,
         run_id=args.run_id,

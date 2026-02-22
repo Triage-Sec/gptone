@@ -78,6 +78,9 @@ def _read_metric_bundle(manifest: Mapping[str, object]) -> Dict[str, object]:
     pattern_strata = summary.get("strata", {})
     if not isinstance(pattern_strata, dict):
         pattern_strata = {}
+    pattern_stratum_kind = pattern_results.get("stratum_kind_summary", {})
+    if not isinstance(pattern_stratum_kind, dict):
+        pattern_stratum_kind = {}
 
     serialized_pattern_strata: Dict[str, Dict[str, float]] = {}
     for stratum, metrics in pattern_strata.items():
@@ -89,6 +92,24 @@ def _read_metric_bundle(manifest: Mapping[str, object]) -> Dict[str, object]:
             "transition_agreement": float(metrics.get("transition_agreement", 0.0) or 0.0),
             "sample_count": float(metrics.get("sample_count", 0.0) or 0.0),
         }
+
+    serialized_pattern_stratum_kind: Dict[str, Dict[str, Dict[str, float]]] = {}
+    for stratum, by_kind in pattern_stratum_kind.items():
+        if not isinstance(by_kind, dict):
+            continue
+        out_by_kind: Dict[str, Dict[str, float]] = {}
+        for kind, metrics in by_kind.items():
+            if not isinstance(metrics, dict):
+                continue
+            out_by_kind[str(kind)] = {
+                "agreement_rate": float(metrics.get("agreement_rate", 0.0) or 0.0),
+                "probability_mae": float(metrics.get("probability_mae", 0.0) or 0.0),
+                "transition_agreement": float(metrics.get("transition_agreement", 0.0) or 0.0),
+                "sample_count": float(metrics.get("sample_count", 0.0) or 0.0),
+                "transition_sample_count": float(metrics.get("transition_sample_count", 0.0) or 0.0),
+            }
+        if out_by_kind:
+            serialized_pattern_stratum_kind[str(stratum)] = out_by_kind
 
     return {
         "clone_score": float(test_results.get("agreement_rate", 0.0)),
@@ -109,6 +130,7 @@ def _read_metric_bundle(manifest: Mapping[str, object]) -> Dict[str, object]:
             "sample_count": float(pattern_overall.get("sample_count", 0.0) or 0.0),
         },
         "pattern_strata": serialized_pattern_strata,
+        "pattern_stratum_kind": serialized_pattern_stratum_kind,
     }
 
 
@@ -202,6 +224,130 @@ def _pattern_failures(
         if transition < stratum_transition_min:
             failures.append(f"pattern.stratum[{stratum}].transition<{stratum_transition_min:.4f}")
     return failures
+
+
+def _rank_pattern_gate_deficits(
+    metric_bundle: Mapping[str, object],
+    targets: Mapping[str, object],
+) -> List[Dict[str, object]]:
+    deficits: List[Dict[str, object]] = []
+    overall = metric_bundle.get("pattern_overall", {})
+    strata = metric_bundle.get("pattern_strata", {})
+    stratum_kind = metric_bundle.get("pattern_stratum_kind", {})
+    if not isinstance(overall, dict):
+        overall = {}
+    if not isinstance(strata, dict):
+        strata = {}
+    if not isinstance(stratum_kind, dict):
+        stratum_kind = {}
+
+    overall_agreement_min = float(targets.get("overall_agreement_min", 0.0) or 0.0)
+    overall_mae_max = float(targets.get("overall_probability_mae_max", 1.0) or 1.0)
+    overall_transition_min = float(targets.get("overall_transition_agreement_min", 0.0) or 0.0)
+    stratum_agreement_min = float(targets.get("stratum_agreement_min", 0.0) or 0.0)
+    stratum_mae_max = float(targets.get("stratum_probability_mae_max", 1.0) or 1.0)
+    stratum_transition_min = float(targets.get("stratum_transition_agreement_min", 0.0) or 0.0)
+    min_samples = int(targets.get("stratum_min_samples", 0) or 0)
+
+    def _entry(
+        *,
+        scope: str,
+        sample_count: float,
+        agreement_rate: float,
+        probability_mae: float,
+        transition_agreement: float,
+        agreement_min: float,
+        mae_max: float,
+        transition_min: float,
+        stratum: str | None = None,
+        perturbation_kind: str | None = None,
+    ) -> Dict[str, object]:
+        agreement_deficit = max(0.0, agreement_min - agreement_rate)
+        mae_excess = max(0.0, probability_mae - mae_max)
+        transition_deficit = max(0.0, transition_min - transition_agreement)
+        total_deficit = agreement_deficit + mae_excess + transition_deficit
+        return {
+            "scope": scope,
+            "stratum": stratum,
+            "perturbation_kind": perturbation_kind,
+            "sample_count": float(sample_count),
+            "agreement_rate": float(agreement_rate),
+            "probability_mae": float(probability_mae),
+            "transition_agreement": float(transition_agreement),
+            "agreement_deficit": float(agreement_deficit),
+            "probability_mae_excess": float(mae_excess),
+            "transition_deficit": float(transition_deficit),
+            "total_deficit": float(total_deficit),
+            "blocking": bool(total_deficit > 0.0),
+        }
+
+    if overall:
+        deficits.append(
+            _entry(
+                scope="overall",
+                sample_count=float(overall.get("sample_count", 0.0) or 0.0),
+                agreement_rate=float(overall.get("agreement_rate", 0.0) or 0.0),
+                probability_mae=float(overall.get("probability_mae", 0.0) or 0.0),
+                transition_agreement=float(overall.get("transition_agreement", 0.0) or 0.0),
+                agreement_min=overall_agreement_min,
+                mae_max=overall_mae_max,
+                transition_min=overall_transition_min,
+            )
+        )
+
+    for stratum_name, metrics in strata.items():
+        if not isinstance(metrics, dict):
+            continue
+        sample_count = float(metrics.get("sample_count", 0.0) or 0.0)
+        if sample_count < float(min_samples):
+            continue
+        deficits.append(
+            _entry(
+                scope="stratum",
+                stratum=str(stratum_name),
+                sample_count=sample_count,
+                agreement_rate=float(metrics.get("agreement_rate", 0.0) or 0.0),
+                probability_mae=float(metrics.get("probability_mae", 0.0) or 0.0),
+                transition_agreement=float(metrics.get("transition_agreement", 0.0) or 0.0),
+                agreement_min=stratum_agreement_min,
+                mae_max=stratum_mae_max,
+                transition_min=stratum_transition_min,
+            )
+        )
+
+    for stratum_name, by_kind in stratum_kind.items():
+        if not isinstance(by_kind, dict):
+            continue
+        for kind_name, metrics in by_kind.items():
+            if not isinstance(metrics, dict):
+                continue
+            sample_count = float(metrics.get("sample_count", 0.0) or 0.0)
+            if sample_count < float(min_samples):
+                continue
+            deficits.append(
+                _entry(
+                    scope="stratum_kind",
+                    stratum=str(stratum_name),
+                    perturbation_kind=str(kind_name),
+                    sample_count=sample_count,
+                    agreement_rate=float(metrics.get("agreement_rate", 0.0) or 0.0),
+                    probability_mae=float(metrics.get("probability_mae", 0.0) or 0.0),
+                    transition_agreement=float(metrics.get("transition_agreement", 0.0) or 0.0),
+                    agreement_min=stratum_agreement_min,
+                    mae_max=stratum_mae_max,
+                    transition_min=stratum_transition_min,
+                )
+            )
+
+    deficits.sort(
+        key=lambda item: (
+            -float(item.get("total_deficit", 0.0) or 0.0),
+            str(item.get("scope", "")),
+            str(item.get("stratum", "")),
+            str(item.get("perturbation_kind", "")),
+        )
+    )
+    return deficits
 
 
 def _artifact_checksum_failures(manifest: Mapping[str, object]) -> List[str]:
@@ -398,6 +544,7 @@ def verify_runs(
         pattern_pass = True
         for idx, bundle in enumerate(metric_bundles):
             failures = _pattern_failures(bundle, targets)
+            gate_deficits = _rank_pattern_gate_deficits(bundle, targets)
             if failures:
                 pattern_pass = False
             per_run.append(
@@ -406,8 +553,10 @@ def verify_runs(
                     "metrics": {
                         "pattern_overall": bundle.get("pattern_overall", {}),
                         "pattern_strata": bundle.get("pattern_strata", {}),
+                        "pattern_stratum_kind": bundle.get("pattern_stratum_kind", {}),
                     },
                     "failures": failures,
+                    "gate_deficits": gate_deficits,
                 }
             )
         checks.append(

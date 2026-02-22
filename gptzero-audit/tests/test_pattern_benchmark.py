@@ -5,6 +5,7 @@ from src.pattern_benchmark import (
     generate_variants,
     select_boundary_variants,
     summarize_prediction_rows,
+    summarize_prediction_rows_by_stratum_kind,
 )
 
 
@@ -77,6 +78,73 @@ class PatternBenchmarkTest(unittest.TestCase):
         # Should include one below-base and one above-base candidate.
         self.assertTrue(any(p < probs[0] for p in picked_probs[1:]))
         self.assertTrue(any(p > probs[0] for p in picked_probs[1:]))
+
+    def test_select_boundary_variants_applies_kind_quotas(self) -> None:
+        variants = [
+            {"variant_id": "base", "perturbation_kind": "identity", "text": "a"},
+            {"variant_id": "toward_human_0", "perturbation_kind": "toward_human", "text": "b"},
+            {"variant_id": "toward_human_1", "perturbation_kind": "toward_human", "text": "c"},
+            {"variant_id": "toward_ai_0", "perturbation_kind": "toward_ai", "text": "d"},
+            {"variant_id": "toward_ai_1", "perturbation_kind": "toward_ai", "text": "e"},
+            {"variant_id": "shuffle_sentences_0", "perturbation_kind": "shuffle_sentences", "text": "f"},
+        ]
+        probs = [0.8, 0.45, 0.42, 0.88, 0.91, 0.5]
+        picked = select_boundary_variants(
+            variants,
+            probs,
+            target_count=5,
+            kind_min_counts={"toward_human": 1, "toward_ai": 2},
+        )
+        picked_kinds = [row["perturbation_kind"] for row in picked]
+        self.assertGreaterEqual(picked_kinds.count("toward_human"), 1)
+        self.assertGreaterEqual(picked_kinds.count("toward_ai"), 2)
+
+    def test_summarize_prediction_rows_by_stratum_kind(self) -> None:
+        rows = [
+            {
+                "base_sample_id": "s1",
+                "stratum": "human_pre_llm",
+                "perturbation_kind": "identity",
+                "variant_order": 0,
+                "gptzero_prob": 0.20,
+                "surrogate_prob": 0.22,
+                "match": True,
+            },
+            {
+                "base_sample_id": "s1",
+                "stratum": "human_pre_llm",
+                "perturbation_kind": "toward_ai",
+                "variant_order": 1,
+                "gptzero_prob": 0.40,
+                "surrogate_prob": 0.38,
+                "match": True,
+            },
+            {
+                "base_sample_id": "s2",
+                "stratum": "human_pre_llm",
+                "perturbation_kind": "identity",
+                "variant_order": 0,
+                "gptzero_prob": 0.70,
+                "surrogate_prob": 0.68,
+                "match": True,
+            },
+            {
+                "base_sample_id": "s2",
+                "stratum": "human_pre_llm",
+                "perturbation_kind": "toward_ai",
+                "variant_order": 1,
+                "gptzero_prob": 0.60,
+                "surrogate_prob": 0.71,
+                "match": False,
+            },
+        ]
+        summary = summarize_prediction_rows_by_stratum_kind(rows)
+        self.assertIn("human_pre_llm", summary)
+        self.assertIn("toward_ai", summary["human_pre_llm"])
+        toward_ai = summary["human_pre_llm"]["toward_ai"]
+        self.assertEqual(toward_ai["sample_count"], 2.0)
+        # First sample has same transition sign, second differs.
+        self.assertAlmostEqual(toward_ai["transition_agreement"], 0.5, places=6)
 
 
 if __name__ == "__main__":
