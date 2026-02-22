@@ -42,6 +42,8 @@ Create secret used by `modal_app.py`:
 modal secret create gptzero-audit-secrets GPTZERO_API_KEY=YOUR_GPTZERO_API_KEY
 ```
 
+The runtime accepts either `GPTZERO_API_KEY` or `GPT_ZERO_API_KEY` in Modal secrets.
+
 Run remote pipeline:
 
 ```bash
@@ -147,6 +149,27 @@ python scripts/mine_boundary_probes.py \
   --quota-mixed 6
 ```
 
+Build the empirical corpus-matrix dataset (`v5`) from `v4`:
+
+```bash
+python scripts/build_dataset_v5.py \
+  --source-version v4 \
+  --target-version v5 \
+  --target-per-stratum 120 \
+  --variants-per-augmented-base 3 \
+  --seed 1337
+```
+
+Include external corpora (optional):
+
+```bash
+python scripts/build_dataset_v5.py \
+  --source-version v4 \
+  --target-version v5 \
+  --external-corpus-config configs/external_corpora.example.json \
+  --target-per-stratum 200
+```
+
 Run the probability-objective surrogate configuration:
 
 ```bash
@@ -161,6 +184,41 @@ python main.py \
   --oversample \
   --calibration-method temperature \
   --cv-repeats 5
+```
+
+Run perturbation-based pattern benchmark (writes `data/pattern_benchmark_results.json`):
+
+```bash
+python scripts/run_pattern_benchmark.py \
+  --api-key YOUR_GPTZERO_API_KEY \
+  --output-dir . \
+  --dataset-version v5 \
+  --max-base-per-stratum 80 \
+  --variants-per-base 8 \
+  --candidate-multiplier 6 \
+  --boundary-focus \
+  --blend-fit-split base \
+  --stratum-calibration affine \
+  --seed 1337
+```
+
+## Modal Matrix Execution
+
+Run the strict empirical matrix from config:
+
+```bash
+modal run modal_app.py::matrix --config-path configs/modal_empirical_matrix.json
+```
+
+Single run + pattern benchmark (manual sequence):
+
+```bash
+modal run modal_app.py \
+  --run-id modal-m5-001 \
+  --seed 42 \
+  --dataset-version v5
+
+modal run modal_app.py::run_pattern_benchmark --config '{"run_id":"modal-m5-001","output_dir":"/artifacts/gptzero-audit/m5","dataset_version":"v5"}'
 ```
 
 ## Reproducibility Verification
@@ -202,11 +260,33 @@ python scripts/verify_run.py \
   --require-stability-runs 3
 ```
 
+Also enforce pattern-benchmark gates (overall + per-stratum):
+
+```bash
+python scripts/verify_run.py \
+  --manifest-paths \
+    artifacts/M5-seed-42/run_manifest.json \
+    artifacts/M5-seed-1337/run_manifest.json \
+    artifacts/M5-seed-2026/run_manifest.json \
+  --enforce-promotion-targets \
+  --enforce-pattern-targets \
+  --pattern-overall-agreement-min 0.99 \
+  --pattern-overall-probability-mae-max 0.02 \
+  --pattern-overall-transition-min 0.97 \
+  --pattern-stratum-agreement-min 0.97 \
+  --pattern-stratum-probability-mae-max 0.03 \
+  --pattern-stratum-transition-min 0.94 \
+  --pattern-stratum-min-samples 30 \
+  --pattern-required-strata human_pre_llm human_conversational ai_instructional ai_formal mixed_blended boundary_near
+```
+
 The verifier checks:
 
 - artifact checksum validity,
 - dataset manifest hash equality,
-- clone-score and accuracy metric drift within tolerances.
+- clone-score and accuracy metric drift within tolerances,
+- strict promotion targets (optional),
+- pattern benchmark overall + stratum targets (optional).
 
 ## Tests
 

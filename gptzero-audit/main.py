@@ -1424,6 +1424,7 @@ Examples:
         )
         artifact_paths = {
             "test_results": DATA_DIR / "test_results.json",
+            "pattern_benchmark": DATA_DIR / "pattern_benchmark_results.json",
             "model_meta": MODEL_DIR / "model_meta.json",
             "classifier_model": MODEL_DIR / "surrogate_model.joblib",
             "regressor_model": MODEL_DIR / "surrogate_regressor.joblib",
@@ -1495,6 +1496,7 @@ Examples:
     artifact_paths = {
         "extraction_results": DATA_DIR / "extraction_results.json",
         "test_results": DATA_DIR / "test_results.json",
+        "pattern_benchmark": DATA_DIR / "pattern_benchmark_results.json",
         "model_meta": MODEL_DIR / "model_meta.json",
         "classifier_model": MODEL_DIR / "surrogate_model.joblib",
         "regressor_model": MODEL_DIR / "surrogate_regressor.joblib",

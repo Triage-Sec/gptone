@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.verification import DEFAULT_PROMOTION_TARGETS, verify_runs
+from src.verification import DEFAULT_PATTERN_TARGETS, DEFAULT_PROMOTION_TARGETS, verify_runs
 
 
 def resolve_manifest_paths(run_ids: List[str], output_dir: Path) -> List[Path]:
@@ -51,6 +51,52 @@ def main() -> int:
     parser.add_argument("--clone-spread-max", type=float, default=DEFAULT_PROMOTION_TARGETS["clone_score_spread_max"])
     parser.add_argument("--mae-spread-max", type=float, default=DEFAULT_PROMOTION_TARGETS["mae_spread_max"])
     parser.add_argument("--require-stability-runs", type=int, default=DEFAULT_PROMOTION_TARGETS["require_runs"])
+    parser.add_argument(
+        "--enforce-pattern-targets",
+        action="store_true",
+        help="Require pattern benchmark overall + per-stratum targets.",
+    )
+    parser.add_argument(
+        "--pattern-overall-agreement-min",
+        type=float,
+        default=DEFAULT_PATTERN_TARGETS["overall_agreement_min"],
+    )
+    parser.add_argument(
+        "--pattern-overall-probability-mae-max",
+        type=float,
+        default=DEFAULT_PATTERN_TARGETS["overall_probability_mae_max"],
+    )
+    parser.add_argument(
+        "--pattern-overall-transition-min",
+        type=float,
+        default=DEFAULT_PATTERN_TARGETS["overall_transition_agreement_min"],
+    )
+    parser.add_argument(
+        "--pattern-stratum-agreement-min",
+        type=float,
+        default=DEFAULT_PATTERN_TARGETS["stratum_agreement_min"],
+    )
+    parser.add_argument(
+        "--pattern-stratum-probability-mae-max",
+        type=float,
+        default=DEFAULT_PATTERN_TARGETS["stratum_probability_mae_max"],
+    )
+    parser.add_argument(
+        "--pattern-stratum-transition-min",
+        type=float,
+        default=DEFAULT_PATTERN_TARGETS["stratum_transition_agreement_min"],
+    )
+    parser.add_argument(
+        "--pattern-stratum-min-samples",
+        type=int,
+        default=DEFAULT_PATTERN_TARGETS["stratum_min_samples"],
+    )
+    parser.add_argument(
+        "--pattern-required-strata",
+        nargs="*",
+        default=list(DEFAULT_PATTERN_TARGETS["required_strata"]),
+        help="Optional list of strata that must be present in each run's pattern benchmark.",
+    )
     args = parser.parse_args()
 
     if args.manifest_paths:
@@ -68,6 +114,7 @@ def main() -> int:
             "surrogate_accuracy_delta_max": args.surrogate_accuracy_delta_max,
         },
         enforce_promotion=bool(args.enforce_promotion_targets),
+        enforce_pattern=bool(args.enforce_pattern_targets),
         promotion_targets={
             "agreement_min": args.agreement_min,
             "probability_mae_max": args.probability_mae_max,
@@ -80,6 +127,16 @@ def main() -> int:
             "clone_score_spread_max": args.clone_spread_max,
             "mae_spread_max": args.mae_spread_max,
             "require_runs": args.require_stability_runs,
+        },
+        pattern_targets={
+            "overall_agreement_min": args.pattern_overall_agreement_min,
+            "overall_probability_mae_max": args.pattern_overall_probability_mae_max,
+            "overall_transition_agreement_min": args.pattern_overall_transition_min,
+            "stratum_agreement_min": args.pattern_stratum_agreement_min,
+            "stratum_probability_mae_max": args.pattern_stratum_probability_mae_max,
+            "stratum_transition_agreement_min": args.pattern_stratum_transition_min,
+            "stratum_min_samples": args.pattern_stratum_min_samples,
+            "required_strata": args.pattern_required_strata,
         },
         require_stability_runs=args.require_stability_runs,
     )

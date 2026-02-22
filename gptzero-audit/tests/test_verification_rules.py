@@ -19,6 +19,7 @@ def _write_manifest(
     per_class_human: float = 0.8,
     per_class_mixed: float = 0.8,
     per_class_ai: float = 0.95,
+    pattern_summary: dict | None = None,
 ) -> Path:
     data_dir = path.parent / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -39,17 +40,30 @@ def _write_manifest(
     }
     test_path.write_text(json.dumps(test_payload), encoding="utf-8")
 
+    artifacts = {
+        "test_results": {
+            "path": str(test_path),
+            "sha256": file_sha256(test_path),
+            "size_bytes": test_path.stat().st_size,
+        }
+    }
+    if pattern_summary is not None:
+        pattern_path = data_dir / f"{path.stem}_pattern_results.json"
+        pattern_payload = {
+            "summary": pattern_summary,
+        }
+        pattern_path.write_text(json.dumps(pattern_payload), encoding="utf-8")
+        artifacts["pattern_benchmark"] = {
+            "path": str(pattern_path),
+            "sha256": file_sha256(pattern_path),
+            "size_bytes": pattern_path.stat().st_size,
+        }
+
     manifest = {
         "run_metadata": {
             "dataset": {"manifest_sha256": dataset_hash},
         },
-        "artifacts": {
-            "test_results": {
-                "path": str(test_path),
-                "sha256": file_sha256(test_path),
-                "size_bytes": test_path.stat().st_size,
-            }
-        },
+        "artifacts": artifacts,
         "metrics": {},
     }
     path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -57,6 +71,31 @@ def _write_manifest(
 
 
 class VerificationRulesTest(unittest.TestCase):
+    @staticmethod
+    def _passing_pattern_summary() -> dict:
+        return {
+            "overall": {
+                "agreement_rate": 0.995,
+                "probability_mae": 0.012,
+                "transition_agreement": 0.982,
+                "sample_count": 240,
+            },
+            "strata": {
+                "human_pre_llm": {
+                    "agreement_rate": 0.98,
+                    "probability_mae": 0.02,
+                    "transition_agreement": 0.97,
+                    "sample_count": 60,
+                },
+                "ai_instructional": {
+                    "agreement_rate": 0.99,
+                    "probability_mae": 0.018,
+                    "transition_agreement": 0.965,
+                    "sample_count": 60,
+                },
+            },
+        }
+
     def test_verify_runs_passes_when_within_tolerance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -178,6 +217,85 @@ class VerificationRulesTest(unittest.TestCase):
             self.assertFalse(result["passed"])
             prom_check = [c for c in result["checks"] if c["name"] == "promotion_targets_met"][0]
             self.assertFalse(prom_check["passed"])
+
+    def test_verify_runs_enforces_pattern_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            p1 = self._passing_pattern_summary()
+            p2 = self._passing_pattern_summary()
+            p2["overall"]["agreement_rate"] = 0.994
+            p2["overall"]["probability_mae"] = 0.013
+
+            m1 = _write_manifest(
+                base / "m1.json",
+                "abc",
+                0.995,
+                0.45,
+                0.40,
+                reg_mae=0.01,
+                ci_low=0.98,
+                per_class_ai=0.995,
+                per_class_human=0.96,
+                per_class_mixed=0.91,
+                pattern_summary=p1,
+            )
+            m2 = _write_manifest(
+                base / "m2.json",
+                "abc",
+                0.994,
+                0.45,
+                0.40,
+                reg_mae=0.012,
+                ci_low=0.979,
+                per_class_ai=0.994,
+                per_class_human=0.95,
+                per_class_mixed=0.91,
+                pattern_summary=p2,
+            )
+            result = verify_runs(
+                manifest_paths=[m1, m2],
+                enforce_pattern=True,
+                pattern_targets={
+                    "required_strata": ["human_pre_llm", "ai_instructional"],
+                },
+            )
+            self.assertTrue(result["passed"])
+            pattern_check = [c for c in result["checks"] if c["name"] == "pattern_targets_met"][0]
+            self.assertTrue(pattern_check["passed"])
+
+    def test_verify_runs_fails_pattern_targets_on_low_stratum(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            pattern = self._passing_pattern_summary()
+            pattern["strata"]["human_pre_llm"]["agreement_rate"] = 0.5
+
+            m1 = _write_manifest(
+                base / "m1.json",
+                "abc",
+                0.995,
+                0.45,
+                0.40,
+                pattern_summary=pattern,
+            )
+            m2 = _write_manifest(
+                base / "m2.json",
+                "abc",
+                0.995,
+                0.45,
+                0.40,
+                pattern_summary=pattern,
+            )
+            result = verify_runs(
+                manifest_paths=[m1, m2],
+                enforce_pattern=True,
+                pattern_targets={
+                    "stratum_agreement_min": 0.97,
+                    "stratum_min_samples": 20,
+                },
+            )
+            self.assertFalse(result["passed"])
+            pattern_check = [c for c in result["checks"] if c["name"] == "pattern_targets_met"][0]
+            self.assertFalse(pattern_check["passed"])
 
 
 if __name__ == "__main__":

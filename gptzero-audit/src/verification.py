@@ -29,6 +29,17 @@ DEFAULT_PROMOTION_TARGETS = {
     "require_runs": 3,
 }
 
+DEFAULT_PATTERN_TARGETS = {
+    "overall_agreement_min": 0.99,
+    "overall_probability_mae_max": 0.02,
+    "overall_transition_agreement_min": 0.97,
+    "stratum_agreement_min": 0.97,
+    "stratum_probability_mae_max": 0.03,
+    "stratum_transition_agreement_min": 0.94,
+    "stratum_min_samples": 30,
+    "required_strata": [],
+}
+
 
 def _load_json(path: Path) -> Dict[str, object]:
     with path.open("r", encoding="utf-8") as handle:
@@ -38,15 +49,47 @@ def _load_json(path: Path) -> Dict[str, object]:
 def _read_metric_bundle(manifest: Mapping[str, object]) -> Dict[str, object]:
     artifacts = manifest.get("artifacts", {})
     test_info = artifacts.get("test_results", {})
-    test_path = Path(test_info.get("path", ""))
-    if not test_path.exists():
+    test_raw_path = str(test_info.get("path", "")).strip()
+    if not test_raw_path:
+        return {}
+    test_path = Path(test_raw_path)
+    if not test_path.exists() or not test_path.is_file():
         return {}
     test_results = _load_json(test_path)
+    pattern_results: Dict[str, object] = {}
+    pattern_info = artifacts.get("pattern_benchmark", {})
+    pattern_raw_path = str(pattern_info.get("path", "")).strip()
+    pattern_path = Path(pattern_raw_path) if pattern_raw_path else None
+    if pattern_path is not None and pattern_path.exists() and pattern_path.is_file():
+        pattern_results = _load_json(pattern_path)
+
     gt_eval = test_results.get("ground_truth_evaluation", {})
     ci = test_results.get("agreement_ci_95") or [0.0, 0.0]
     per_class_agreement = test_results.get("per_class_agreement") or {}
     if not isinstance(per_class_agreement, dict):
         per_class_agreement = {}
+
+    summary = pattern_results.get("summary", {}) if isinstance(pattern_results, dict) else {}
+    if not isinstance(summary, dict):
+        summary = {}
+    pattern_overall = summary.get("overall", {})
+    if not isinstance(pattern_overall, dict):
+        pattern_overall = {}
+    pattern_strata = summary.get("strata", {})
+    if not isinstance(pattern_strata, dict):
+        pattern_strata = {}
+
+    serialized_pattern_strata: Dict[str, Dict[str, float]] = {}
+    for stratum, metrics in pattern_strata.items():
+        if not isinstance(metrics, dict):
+            continue
+        serialized_pattern_strata[str(stratum)] = {
+            "agreement_rate": float(metrics.get("agreement_rate", 0.0) or 0.0),
+            "probability_mae": float(metrics.get("probability_mae", 0.0) or 0.0),
+            "transition_agreement": float(metrics.get("transition_agreement", 0.0) or 0.0),
+            "sample_count": float(metrics.get("sample_count", 0.0) or 0.0),
+        }
+
     return {
         "clone_score": float(test_results.get("agreement_rate", 0.0)),
         "gptzero_accuracy": float(gt_eval.get("gptzero_accuracy", 0.0) or 0.0),
@@ -59,6 +102,13 @@ def _read_metric_bundle(manifest: Mapping[str, object]) -> Dict[str, object]:
             for cls, val in per_class_agreement.items()
             if val is not None
         },
+        "pattern_overall": {
+            "agreement_rate": float(pattern_overall.get("agreement_rate", 0.0) or 0.0),
+            "probability_mae": float(pattern_overall.get("probability_mae", 0.0) or 0.0),
+            "transition_agreement": float(pattern_overall.get("transition_agreement", 0.0) or 0.0),
+            "sample_count": float(pattern_overall.get("sample_count", 0.0) or 0.0),
+        },
+        "pattern_strata": serialized_pattern_strata,
     }
 
 
@@ -99,6 +149,61 @@ def _promotion_failures(
     return failures
 
 
+def _pattern_failures(
+    metric_bundle: Mapping[str, object],
+    targets: Mapping[str, object],
+) -> List[str]:
+    failures: List[str] = []
+    overall = metric_bundle.get("pattern_overall", {})
+    if not isinstance(overall, dict) or not overall:
+        return ["pattern_overall_missing"]
+
+    overall_agreement = float(overall.get("agreement_rate", 0.0) or 0.0)
+    overall_mae = float(overall.get("probability_mae", 0.0) or 0.0)
+    overall_transition = float(overall.get("transition_agreement", 0.0) or 0.0)
+
+    if overall_agreement < float(targets.get("overall_agreement_min", 0.0)):
+        failures.append(f"pattern.overall.agreement<{float(targets.get('overall_agreement_min', 0.0)):.4f}")
+    if overall_mae > float(targets.get("overall_probability_mae_max", 1.0)):
+        failures.append(f"pattern.overall.mae>{float(targets.get('overall_probability_mae_max', 1.0)):.4f}")
+    if overall_transition < float(targets.get("overall_transition_agreement_min", 0.0)):
+        failures.append(
+            f"pattern.overall.transition<{float(targets.get('overall_transition_agreement_min', 0.0)):.4f}"
+        )
+
+    strata = metric_bundle.get("pattern_strata", {})
+    if not isinstance(strata, dict):
+        strata = {}
+
+    required = targets.get("required_strata", [])
+    if isinstance(required, list):
+        for name in required:
+            if str(name) not in strata:
+                failures.append(f"pattern.required_stratum_missing:{name}")
+
+    min_samples = int(targets.get("stratum_min_samples", 0) or 0)
+    stratum_agreement_min = float(targets.get("stratum_agreement_min", 0.0))
+    stratum_mae_max = float(targets.get("stratum_probability_mae_max", 1.0))
+    stratum_transition_min = float(targets.get("stratum_transition_agreement_min", 0.0))
+
+    for stratum, metrics in strata.items():
+        if not isinstance(metrics, dict):
+            continue
+        sample_count = float(metrics.get("sample_count", 0.0) or 0.0)
+        if sample_count < min_samples:
+            continue
+        agreement = float(metrics.get("agreement_rate", 0.0) or 0.0)
+        mae = float(metrics.get("probability_mae", 0.0) or 0.0)
+        transition = float(metrics.get("transition_agreement", 0.0) or 0.0)
+        if agreement < stratum_agreement_min:
+            failures.append(f"pattern.stratum[{stratum}].agreement<{stratum_agreement_min:.4f}")
+        if mae > stratum_mae_max:
+            failures.append(f"pattern.stratum[{stratum}].mae>{stratum_mae_max:.4f}")
+        if transition < stratum_transition_min:
+            failures.append(f"pattern.stratum[{stratum}].transition<{stratum_transition_min:.4f}")
+    return failures
+
+
 def _artifact_checksum_failures(manifest: Mapping[str, object]) -> List[str]:
     failures: List[str] = []
     for key, info in manifest.get("artifacts", {}).items():
@@ -120,7 +225,9 @@ def verify_runs(
     manifest_paths: Iterable[Path],
     tolerances: Mapping[str, float] | None = None,
     promotion_targets: Mapping[str, object] | None = None,
+    pattern_targets: Mapping[str, object] | None = None,
     enforce_promotion: bool = False,
+    enforce_pattern: bool = False,
     require_stability_runs: int | None = None,
 ) -> Dict[str, object]:
     """Verify reproducibility constraints across two or more run manifests."""
@@ -276,6 +383,41 @@ def verify_runs(
                 "name": "promotion_stability",
                 "passed": stability_pass,
                 "details": stability_details,
+            }
+        )
+
+    if enforce_pattern:
+        targets = dict(DEFAULT_PATTERN_TARGETS)
+        if pattern_targets:
+            targets.update(pattern_targets)
+            required = pattern_targets.get("required_strata", [])
+            if isinstance(required, list):
+                targets["required_strata"] = [str(item) for item in required]
+
+        per_run = []
+        pattern_pass = True
+        for idx, bundle in enumerate(metric_bundles):
+            failures = _pattern_failures(bundle, targets)
+            if failures:
+                pattern_pass = False
+            per_run.append(
+                {
+                    "run_index": idx,
+                    "metrics": {
+                        "pattern_overall": bundle.get("pattern_overall", {}),
+                        "pattern_strata": bundle.get("pattern_strata", {}),
+                    },
+                    "failures": failures,
+                }
+            )
+        checks.append(
+            {
+                "name": "pattern_targets_met",
+                "passed": pattern_pass,
+                "details": {
+                    "targets": targets,
+                    "runs": per_run,
+                },
             }
         )
 
