@@ -19,9 +19,13 @@ class GPTZeroClient:
         retry_max_delay=8.0,
         timeout_seconds=30,
     ):
-        self.api_key = api_key or os.environ.get("GPTZERO_API_KEY")
+        self.api_key = (
+            api_key
+            or os.environ.get("GPTZERO_API_KEY")
+            or os.environ.get("GPT_ZERO_API_KEY")
+        )
         if not self.api_key:
-            raise ValueError("Set GPTZERO_API_KEY or pass api_key=")
+            raise ValueError("Set GPTZERO_API_KEY/GPT_ZERO_API_KEY or pass api_key=")
         self.headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
