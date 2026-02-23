@@ -559,24 +559,70 @@ def _call_claude(prompt: str) -> Optional[str]:
         return None
 
 
+def _get_gptzero_client(api_key: Optional[str] = None) -> Tuple[Any, str]:
+    """Get a GPTZero client, loading the key from env or .env file."""
+    key = api_key
+    if not key:
+        key = os.environ.get("GPTZERO_API_KEY") or os.environ.get("GPT_ZERO_API_KEY")
+    if not key:
+        env_path = PROJECT_ROOT.parent / ".env"
+        if env_path.exists():
+            for line in env_path.read_text().splitlines():
+                if line.startswith("GPT_ZERO_API_KEY=") or line.startswith("GPTZERO_API_KEY="):
+                    key = line.split("=", 1)[1].strip()
+                    break
+    if not key:
+        return None, ""
+    from src.client import GPTZeroClient
+    return GPTZeroClient(api_key=key), key
+
+
+def _gptzero_prob(client: Any, text: str) -> Tuple[float, str]:
+    """Query GPTZero and return (probability, class)."""
+    resp = client.predict(text, delay=0.3)
+    if "error" in resp:
+        return -1.0, "error"
+    return float(resp.get("average_generated_prob", 0.0)), str(resp.get("predicted_class", "unknown"))
+
+
 def do_rewrite(surrogate: Surrogate, text: Optional[str] = None,
-               target: float = 0.30, max_iter: int = 5) -> Optional[str]:
-    """LLM-powered rewrite guided by surrogate feature diagnosis."""
+               target: float = 0.30, max_iter: int = 5,
+               gptzero_key: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+    """LLM-powered rewrite verified against GPTZero's live API."""
     if not text:
         text = _read_text()
     if not text:
-        return None
+        return None, gptzero_key
+
+    gz_client, gptzero_key = _get_gptzero_client(gptzero_key)
+    use_live = gz_client is not None
 
     original = normalize_text(text)
     current = original
-    current_prob = surrogate.prob(current)
+
+    if use_live:
+        print(f"\n  {_c(_DIM, 'Scoring against GPTZero live API...')}")
+        current_prob, current_cls = _gptzero_prob(gz_client, current)
+        if current_prob < 0:
+            print(f"  {_c(_RED, 'GPTZero API error. Falling back to surrogate.')}")
+            use_live = False
+            current_prob = surrogate.prob(current)
+        else:
+            print(f"  {_c(_DIM, f'GPTZero says: {current_prob:.4f} ({current_cls})')}")
+    if not use_live:
+        current_prob = surrogate.prob(current)
+
     orig_prob = current_prob
+    oracle_label = "GPTZero" if use_live else "surrogate"
 
     print()
-    print(f"  {_c(_BOLD, 'Rewrite')}  Target: < {target:.2f}  |  Max iterations: {max_iter}")
+    print(f"  {_c(_BOLD, 'Rewrite')}  Target: < {target:.2f}  |  Oracle: {oracle_label}  |  Max iterations: {max_iter}")
     print(f"  {_hr('=')}")
     print(f"  Start   {_bar(current_prob)}  {current_prob:.4f}")
     print()
+
+    stall_count = 0
+    max_stall = 2
 
     for it in range(max_iter):
         if current_prob <= target:
@@ -596,27 +642,52 @@ def do_rewrite(surrogate: Surrogate, text: Optional[str] = None,
             break
 
         candidate = normalize_text(candidate)
-        new_prob = surrogate.prob(candidate)
+
+        if use_live:
+            new_prob, new_cls = _gptzero_prob(gz_client, candidate)
+            if new_prob < 0:
+                print(f"  {_c(_RED, '      API error on this iteration.')}")
+                continue
+        else:
+            new_prob = surrogate.prob(candidate)
+            new_cls = surrogate.classify(candidate)
+
         delta = current_prob - new_prob
-
         arrow = _c(_GREEN, "\u2193") if delta > 0.01 else (_c(_YELLOW, "\u2192") if delta > -0.01 else _c(_RED, "\u2191"))
-        print(f"  {it+1:>3d}.  Claude rewrite               {arrow}  {new_prob:.4f}  ({delta:+.4f})")
+        print(f"  {it+1:>3d}.  Claude rewrite               {arrow}  {new_prob:.4f}  ({delta:+.4f})  [{oracle_label}]")
 
-        if new_prob >= current_prob:
-            print(f"  {_c(_DIM, '      Rewrite did not improve score. Retrying...')}")
+        if new_prob > current_prob:
+            stall_count += 1
+            if stall_count >= max_stall:
+                print(f"  {_c(_DIM, '      No progress after multiple attempts. Stopping.')}")
+                break
+            print(f"  {_c(_DIM, '      Score increased. Retrying...')}")
             continue
 
+        stall_count = 0
         current = candidate
         current_prob = new_prob
 
-    cls = surrogate.classify(current)
-    passed = current_prob <= target
+    if use_live:
+        final_prob, final_cls = current_prob, "unknown"
+        if current != original:
+            final_prob, final_cls = _gptzero_prob(gz_client, current)
+            if final_prob < 0:
+                final_prob = current_prob
+                final_cls = surrogate.classify(current)
+        else:
+            final_cls = current_cls if 'current_cls' in dir() else surrogate.classify(current)
+    else:
+        final_prob = current_prob
+        final_cls = surrogate.classify(current)
+
+    passed = final_prob <= target
 
     print()
     print(f"  {_hr('=')}")
     status = _c(_GREEN, "PASSED") if passed else _c(_RED, "FAILED")
-    print(f"  Result   {status}  {_bar(current_prob)}  {current_prob:.4f}  ({cls})")
-    print(f"  Dropped  {orig_prob:.4f} -> {current_prob:.4f}  ({orig_prob - current_prob:+.4f})")
+    print(f"  Result   {status}  {_bar(final_prob)}  {final_prob:.4f}  ({final_cls})  [{oracle_label}]")
+    print(f"  Dropped  {orig_prob:.4f} -> {final_prob:.4f}  ({orig_prob - final_prob:+.4f})")
     print()
     print(f"  {_c(_BOLD, 'Rewritten Text')}")
     print(f"  {_hr()}")
@@ -640,15 +711,16 @@ def do_rewrite(surrogate: Surrogate, text: Optional[str] = None,
                 print(f"  {_c(_DIM, d)}")
         print()
 
-    return current
+    return current, gptzero_key
 
 
 # -- interactive shell -------------------------------------------------------
 
 def _interactive(surrogate: Surrogate) -> None:
     target = 0.30
-    max_iter = 20
+    max_iter = 5
     api_key: Optional[str] = os.environ.get("GPTZERO_API_KEY") or os.environ.get("GPT_ZERO_API_KEY")
+    gptzero_key: Optional[str] = api_key
     last_rewrite: Optional[str] = None
 
     print(_c(_DIM, BANNER))
@@ -697,7 +769,7 @@ def _interactive(surrogate: Surrogate) -> None:
             do_diagnose(surrogate, inline)
 
         elif cmd in ("r", "rewrite"):
-            result = do_rewrite(surrogate, inline, target=target, max_iter=max_iter)
+            result, gptzero_key = do_rewrite(surrogate, inline, target=target, max_iter=max_iter, gptzero_key=gptzero_key)
             if result:
                 last_rewrite = result
 
@@ -748,7 +820,7 @@ def main() -> None:
     parser.add_argument("--stdin", action="store_true", help="Read text from stdin")
     parser.add_argument("--json", action="store_true", help="JSON output")
     parser.add_argument("--target", type=float, default=0.30, help="Rewrite target (default: 0.30)")
-    parser.add_argument("--max-iterations", type=int, default=20, help="Max rewrite iterations (default: 20)")
+    parser.add_argument("--max-iterations", type=int, default=5, help="Max rewrite iterations (default: 5)")
     parser.add_argument("--api-key", help="GPTZero API key (for verify mode)")
     args = parser.parse_args()
 
@@ -785,7 +857,15 @@ def main() -> None:
                                             for t in triggers[:10]]}, indent=2))
         elif mode == "rewrite":
             current = normalize_text(text)
-            cp = surrogate.prob(current)
+            gz, _ = _get_gptzero_client(args.api_key)
+            if gz:
+                cp, _ = _gptzero_prob(gz, current)
+                if cp < 0:
+                    cp = surrogate.prob(current)
+                    gz = None
+            else:
+                cp = surrogate.prob(current)
+            orig_cp = cp
             for attempt in range(args.max_iterations):
                 if cp <= args.target:
                     break
@@ -797,13 +877,18 @@ def main() -> None:
                 if not candidate:
                     break
                 candidate = normalize_text(candidate)
-                np_ = surrogate.prob(candidate)
+                if gz:
+                    np_, _ = _gptzero_prob(gz, candidate)
+                    if np_ < 0:
+                        continue
+                else:
+                    np_ = surrogate.prob(candidate)
                 if np_ >= cp:
                     continue
                 current, cp = candidate, np_
             print(json.dumps({
                 "passed": cp <= args.target,
-                "original_prob": round(surrogate.prob(normalize_text(text)), 6),
+                "original_prob": round(orig_cp, 6),
                 "final_prob": round(cp, 6),
                 "final_class": surrogate.classify(current),
                 "rewritten_text": current,
@@ -818,7 +903,7 @@ def main() -> None:
     elif mode == "diagnose":
         do_diagnose(surrogate, text)
     elif mode == "rewrite":
-        do_rewrite(surrogate, text, target=args.target, max_iter=args.max_iterations)
+        do_rewrite(surrogate, text, target=args.target, max_iter=args.max_iterations, gptzero_key=args.api_key)
     elif mode == "verify":
         do_verify(surrogate, text, api_key=args.api_key)
 
