@@ -22,10 +22,10 @@ if str(PROJECT_ROOT) not in sys.path:
 import numpy as np
 
 from src.client import GPTZeroClient
-from src.neural_surrogate import GPTZeroSurrogate
 from src.pattern_benchmark import (
     generate_variants,
     select_boundary_variants,
+    set_transition_eps,
     summarize_prediction_rows,
     summarize_prediction_rows_by_stratum_kind,
 )
@@ -80,7 +80,9 @@ def run(
     batch_size = int(config.get("batch_size", 64))
     boundary_focus = bool(config.get("boundary_focus", True))
     cache_name = str(config.get("cache_name", "neural_pattern_cache.json"))
+    transition_eps = float(config.get("transition_eps", 1e-6))
 
+    set_transition_eps(transition_eps)
     rng = random.Random(seed)
     np.random.seed(seed)
 
@@ -100,6 +102,7 @@ def run(
         print(f"Loading perplexity surrogate from {model_dir}...")
         surrogate = PerplexitySurrogate(model_dir)
     else:
+        from src.neural_surrogate import GPTZeroSurrogate
         print(f"Loading neural surrogate from {model_dir}...")
         surrogate = GPTZeroSurrogate(model_dir)
 
@@ -199,19 +202,30 @@ def run(
     texts = [str(r["text"]) for r in valid_rows]
     surrogate_probs = surrogate.predict_prob(texts)
 
+    ai_threshold = float(config.get("ai_threshold", 0.65))
+    human_threshold = float(config.get("human_threshold", 0.35))
+
+    pred_classes = None
+    if hasattr(surrogate, "predict_class") and hasattr(surrogate, "class_model") and surrogate.class_model is not None:
+        print("Using dedicated class predictor for class labels")
+        pred_classes = surrogate.predict_class(texts)
+
     for i, row in enumerate(valid_rows):
         row["surrogate_prob"] = float(surrogate_probs[i])
         gz_cls = row.get("gptzero_class", "human")
-        sp = float(surrogate_probs[i])
-        if sp >= 0.65:
-            pred_cls = "ai"
-        elif sp <= 0.35:
-            pred_cls = "human"
+        if pred_classes is not None:
+            pred_cls = pred_classes[i]
         else:
-            pred_cls = "mixed"
+            sp = float(surrogate_probs[i])
+            if sp >= ai_threshold:
+                pred_cls = "ai"
+            elif sp <= human_threshold:
+                pred_cls = "human"
+            else:
+                pred_cls = "mixed"
         row["surrogate_class"] = pred_cls
         row["match"] = pred_cls == gz_cls
-        row["prob_error"] = abs(float(row["gptzero_prob"]) - sp)
+        row["prob_error"] = abs(float(row["gptzero_prob"]) - float(surrogate_probs[i]))
 
     summary = summarize_prediction_rows(valid_rows)
     stratum_kind = summarize_prediction_rows_by_stratum_kind(valid_rows)

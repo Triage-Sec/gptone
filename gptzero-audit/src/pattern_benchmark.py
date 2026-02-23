@@ -246,6 +246,15 @@ def _sign(value: float, eps: float = 1e-6) -> int:
     return 1 if value > 0 else -1
 
 
+_TRANSITION_EPS: float = 1e-6
+
+
+def set_transition_eps(eps: float) -> None:
+    """Set the global epsilon for transition sign comparison."""
+    global _TRANSITION_EPS
+    _TRANSITION_EPS = max(0.0, float(eps))
+
+
 def _js_divergence(probs_a: Sequence[float], probs_b: Sequence[float], bins: int = 20) -> float:
     if not probs_a or not probs_b:
         return 0.0
@@ -294,7 +303,7 @@ def _transition_agreement(rows: Sequence[Mapping[str, object]]) -> float:
         for item in ordered[1:]:
             d_gz = float(item.get("gptzero_prob", 0.0) or 0.0) - base_gz
             d_sg = float(item.get("surrogate_prob", 0.0) or 0.0) - base_sg
-            all_flags.append(1.0 if _sign(d_gz) == _sign(d_sg) else 0.0)
+            all_flags.append(1.0 if _sign(d_gz, _TRANSITION_EPS) == _sign(d_sg, _TRANSITION_EPS) else 0.0)
     return _safe_mean(all_flags)
 
 

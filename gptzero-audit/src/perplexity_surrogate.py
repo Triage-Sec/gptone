@@ -178,6 +178,8 @@ def train_perplexity_surrogate(
 
     feature_names = list(PERPLEXITY_FEATURE_NAMES)
 
+    skip_ppl = bool(config.get("skip_perplexity", False))
+
     if use_text_features:
         from src.features import extract_features_batch, FEATURE_NAMES
         print(f"Computing text features for {len(texts)} texts...")
@@ -190,9 +192,15 @@ def train_perplexity_surrogate(
         else:
             X_txt, _ = extract_features_batch(texts)
             np.save(str(txt_cache), X_txt)
-        X = np.hstack([X_ppl, X_txt])
-        feature_names.extend(FEATURE_NAMES)
-        print(f"Combined features: {X_ppl.shape[1]} ppl + {X_txt.shape[1]} text = {X.shape[1]}")
+
+        if skip_ppl:
+            X = X_txt
+            feature_names = list(FEATURE_NAMES)
+            print(f"Text-only features: {X.shape[1]}")
+        else:
+            X = np.hstack([X_ppl, X_txt])
+            feature_names.extend(FEATURE_NAMES)
+            print(f"Combined features: {X_ppl.shape[1]} ppl + {X_txt.shape[1]} text = {X.shape[1]}")
     else:
         X = X_ppl
 
@@ -211,13 +219,18 @@ def train_perplexity_surrogate(
     X_val, y_val = X[val_mask], probs[val_mask]
     print(f"Train: {X_train.shape[0]}, Val: {X_val.shape[0]}")
 
-    print("Training GradientBoosting regressor...")
+    n_estimators = int(config.get("n_estimators", 2000))
+    max_depth = int(config.get("max_depth", 8))
+    gbm_lr = float(config.get("gbm_lr", 0.02))
+    min_samples_leaf = int(config.get("min_samples_leaf", 3))
+
+    print(f"Training GradientBoosting regressor (n={n_estimators}, d={max_depth}, lr={gbm_lr})...")
     gbm = GradientBoostingRegressor(
-        n_estimators=500,
-        max_depth=5,
-        learning_rate=0.05,
+        n_estimators=n_estimators,
+        max_depth=max_depth,
+        learning_rate=gbm_lr,
         subsample=0.8,
-        min_samples_leaf=10,
+        min_samples_leaf=min_samples_leaf,
         random_state=seed,
     )
     gbm.fit(X_train, y_train)
@@ -243,13 +256,47 @@ def train_perplexity_surrogate(
     print(f"  Val MAE:   {val_mae:.4f}, Transition: {val_trans:.4f}")
     print(f"  Val Agreement: {val_agreement:.4f}")
 
+    from sklearn.ensemble import GradientBoostingClassifier
+
+    class_labels = np.array([str(r.get("gptzero_class", "human")) for r in records])
+    valid_classes = {"ai", "human", "mixed"}
+    class_mask = np.array([c in valid_classes for c in class_labels])
+    if class_mask.sum() > 100:
+        print("Training class predictor...")
+        cls_model = GradientBoostingClassifier(
+            n_estimators=min(1000, n_estimators),
+            max_depth=min(6, max_depth),
+            learning_rate=0.05,
+            subsample=0.8,
+            min_samples_leaf=max(5, min_samples_leaf),
+            random_state=seed,
+        )
+        X_cls = X[class_mask]
+        y_cls = class_labels[class_mask]
+        if train_mask is not None and len(train_mask) == len(class_mask):
+            cls_train_mask = train_mask[class_mask]
+            if cls_train_mask.sum() > 50:
+                cls_model.fit(X_cls[cls_train_mask], y_cls[cls_train_mask])
+            else:
+                cls_model.fit(X_cls, y_cls)
+        else:
+            cls_model.fit(X_cls, y_cls)
+        cls_train_pred = cls_model.predict(X_cls)
+        cls_accuracy = float(np.mean(cls_train_pred == y_cls))
+        print(f"Class predictor train accuracy: {cls_accuracy:.4f}")
+    else:
+        cls_model = None
+        cls_accuracy = 0.0
+
     model_path = out_path / "ppl_surrogate.pkl"
     with model_path.open("wb") as fh:
         pickle.dump({
             "model": gbm,
+            "class_model": cls_model,
             "gpt2_model": gpt2_model,
             "feature_names": feature_names,
             "use_text_features": use_text_features,
+            "skip_perplexity": skip_ppl,
         }, fh)
 
     importances = dict(zip(feature_names, gbm.feature_importances_.tolist()))
@@ -318,15 +365,34 @@ class PerplexitySurrogate:
         with model_path.open("rb") as fh:
             data = pickle.load(fh)
         self.model = data["model"]
+        self.class_model = data.get("class_model")
         self.gpt2_model = data.get("gpt2_model", "gpt2")
         self.use_text_features = data.get("use_text_features", False)
+        self.skip_perplexity = data.get("skip_perplexity", False)
 
     def predict_prob(self, texts: Sequence[str], batch_size: int = 32) -> np.ndarray:
+        X = self._features(texts)
+        return np.clip(self.model.predict(X), 0.0, 1.0)
+
+    def predict_class(self, texts: Sequence[str]) -> List[str]:
+        """Predict GPTZero class labels using the dedicated class predictor."""
+        X = self._features(texts)
+        if self.class_model is not None:
+            return self.class_model.predict(X).tolist()
+        probs = np.clip(self.model.predict(X), 0.0, 1.0)
+        return [
+            "ai" if p >= 0.65 else ("human" if p <= 0.35 else "mixed")
+            for p in probs
+        ]
+
+    def _features(self, texts: Sequence[str]) -> np.ndarray:
+        if self.skip_perplexity and self.use_text_features:
+            from src.features import extract_features_batch
+            X, _ = extract_features_batch(list(texts))
+            return X
         X_ppl = compute_perplexity_features(texts, model_name=self.gpt2_model, device=self.device)
         if self.use_text_features:
             from src.features import extract_features_batch
             X_txt, _ = extract_features_batch(list(texts))
-            X = np.hstack([X_ppl, X_txt])
-        else:
-            X = X_ppl
-        return np.clip(self.model.predict(X), 0.0, 1.0)
+            return np.hstack([X_ppl, X_txt])
+        return X_ppl

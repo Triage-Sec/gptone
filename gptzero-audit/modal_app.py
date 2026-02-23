@@ -438,7 +438,10 @@ corpus_image = (
     .pip_install(
         "requests>=2.32.0",
         "numpy>=2.4.0",
+        "scikit-learn>=1.8.0",
+        "scipy>=1.17.0",
         "datasets>=3.3.0",
+        "joblib>=1.5.0",
     )
     .add_local_dir(".", remote_path=REMOTE_PROJECT_DIR)
 )
@@ -525,7 +528,7 @@ def build_and_label_corpus(config: Dict[str, object]) -> Dict[str, object]:
     image=gpu_image,
     volumes={"/artifacts": artifacts_volume},
     timeout=3 * 60 * 60,
-    gpu="A100",
+    gpu="H100",
 )
 def train_neural_surrogate(config: Dict[str, object]) -> Dict[str, object]:
     """Fine-tune DistilBERT surrogate on labeled corpus."""
@@ -543,7 +546,7 @@ def train_neural_surrogate(config: Dict[str, object]) -> Dict[str, object]:
     image=gpu_image,
     volumes={"/artifacts": artifacts_volume},
     timeout=3 * 60 * 60,
-    gpu="A100",
+    gpu="H100",
 )
 def train_perplexity_surrogate(config: Dict[str, object]) -> Dict[str, object]:
     """Train GBM surrogate using GPT-2 perplexity features."""
@@ -562,10 +565,10 @@ def train_perplexity_surrogate(config: Dict[str, object]) -> Dict[str, object]:
     volumes={"/artifacts": artifacts_volume},
     timeout=4 * 60 * 60,
     secrets=[modal.Secret.from_name("gptzero-audit-secrets")],
-    gpu="A100",
+    gpu="H100",
 )
 def run_neural_pattern_benchmark(config: Dict[str, object]) -> Dict[str, object]:
-    """Phase 3: Run pattern benchmark with neural surrogate."""
+    """Run pattern benchmark with neural/perplexity surrogate (GPU)."""
     import os
     import sys
 
@@ -632,6 +635,46 @@ def build_diverse_training(config: Dict[str, object]) -> Dict[str, object]:
         variants_per_base=int(config.get("variants_per_base", 6)),
         delay=float(config.get("delay", 0.25)),
     )
+
+
+@app.function(
+    image=corpus_image,
+    volumes={"/artifacts": artifacts_volume},
+    timeout=60 * 60,
+    secrets=[modal.Secret.from_name("gptzero-audit-secrets")],
+)
+def run_text_benchmark(config: Dict[str, object]) -> Dict[str, object]:
+    """Fast CPU-only benchmark for text-features-only surrogate. No GPU spin-up."""
+    import os
+    import sys
+
+    if REMOTE_PROJECT_DIR not in sys.path:
+        sys.path.insert(0, REMOTE_PROJECT_DIR)
+
+    api_key = os.environ.get("GPTZERO_API_KEY") or os.environ.get("GPT_ZERO_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing GPTZERO_API_KEY in Modal secret")
+
+    from scripts.run_neural_pattern_benchmark import run
+
+    return run(api_key=api_key, config=config)
+
+
+@app.function(
+    image=corpus_image,
+    volumes={"/artifacts": artifacts_volume},
+    timeout=60 * 60,
+)
+def train_text_surrogate(config: Dict[str, object]) -> Dict[str, object]:
+    """Fast CPU-only training for text-features-only GBM. No GPU needed."""
+    import sys
+
+    if REMOTE_PROJECT_DIR not in sys.path:
+        sys.path.insert(0, REMOTE_PROJECT_DIR)
+
+    from src.perplexity_surrogate import train_perplexity_surrogate
+
+    return train_perplexity_surrogate(config)
 
 
 @app.local_entrypoint()
