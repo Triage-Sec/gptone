@@ -489,9 +489,79 @@ def do_verify(surrogate: Surrogate, text: Optional[str] = None, api_key: Optiona
     return api_key
 
 
+def _build_rewrite_prompt(text: str, triggers: List[Dict[str, Any]], attempt: int) -> str:
+    """Build the Claude prompt for rewriting text to evade AI detection."""
+    trigger_lines = []
+    for t in triggers[:6]:
+        trigger_lines.append(f"- {t['label']}: your text scores {t['value']:.3f}, human baseline is {t['baseline']:.3f}. {t['suggestion']}")
+    trigger_block = "\n".join(trigger_lines)
+
+    strictness = ""
+    if attempt > 1:
+        strictness = (
+            f"\nThis is attempt {attempt}. Previous rewrites did not reduce the score enough. "
+            "Be MORE aggressive: use very casual language, contractions everywhere, "
+            "short punchy sentences, personal anecdotes, slang where appropriate. "
+            "Break up long sentences. Remove ALL formal academic phrasing."
+        )
+
+    return f"""Rewrite the following text so that an AI text detector classifies it as human-written.
+
+RULES:
+- Preserve the EXACT same meaning, arguments, and information
+- Do NOT add new claims, facts, or ideas that weren't in the original
+- Do NOT remove key information or arguments
+- Make it sound like a real person wrote it naturally
+- Use contractions (don't, can't, it's, won't)
+- Vary sentence lengths -- mix short and long
+- Use casual vocabulary where possible (big not significant, show not demonstrate, use not utilize)
+- Add first-person perspective where natural (I think, in my view)
+- Remove hedging phrases (it is important to note, furthermore, moreover)
+- Remove mechanical transition words at sentence starts
+- Write like a human who knows the topic, not a textbook
+- Return ONLY the rewritten text, nothing else{strictness}
+
+DETECTION TRIGGERS TO FIX:
+{trigger_block}
+
+ORIGINAL TEXT:
+{text}
+
+REWRITTEN TEXT:"""
+
+
+def _call_claude(prompt: str) -> Optional[str]:
+    """Call Claude 4.5 Haiku via Anthropic API."""
+    import anthropic
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        env_path = PROJECT_ROOT.parent / ".env"
+        if env_path.exists():
+            for line in env_path.read_text().splitlines():
+                if line.startswith("ANTHROPIC_API_KEY="):
+                    api_key = line.split("=", 1)[1].strip()
+                    break
+    if not api_key:
+        print(f"  {_c(_RED, 'Error:')} ANTHROPIC_API_KEY not found in environment or .env")
+        return None
+
+    client = anthropic.Anthropic(api_key=api_key)
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text.strip()
+    except Exception as e:
+        print(f"  {_c(_RED, 'Claude API error:')} {e}")
+        return None
+
+
 def do_rewrite(surrogate: Surrogate, text: Optional[str] = None,
-               target: float = 0.30, max_iter: int = 20) -> Optional[str]:
-    """Feature-driven rewrite. Each mutation is targeted at the top trigger and applied at most once."""
+               target: float = 0.30, max_iter: int = 5) -> Optional[str]:
+    """LLM-powered rewrite guided by surrogate feature diagnosis."""
     if not text:
         text = _read_text()
     if not text:
@@ -501,7 +571,6 @@ def do_rewrite(surrogate: Surrogate, text: Optional[str] = None,
     current = original
     current_prob = surrogate.prob(current)
     orig_prob = current_prob
-    failed_pairs: Set[Tuple[str, int]] = set()
 
     print()
     print(f"  {_c(_BOLD, 'Rewrite')}  Target: < {target:.2f}  |  Max iterations: {max_iter}")
@@ -514,43 +583,31 @@ def do_rewrite(surrogate: Surrogate, text: Optional[str] = None,
             break
 
         triggers = _get_triggers(surrogate, current)
-        text_id = hash(current)
-
-        applied = False
-        for trig in triggers:
-            fname = trig["feature"]
-            if fname not in _FEATURE_MUTATIONS:
-                continue
-            for mut_name, mut_fn in _FEATURE_MUTATIONS[fname]:
-                pair_key = (mut_name, text_id)
-                if pair_key in failed_pairs:
-                    continue
-
-                candidate = mut_fn(current)
-                if candidate == current or not candidate.strip():
-                    failed_pairs.add(pair_key)
-                    continue
-
-                new_prob = surrogate.prob(candidate)
-                delta = current_prob - new_prob
-
-                if delta < 0.001:
-                    failed_pairs.add(pair_key)
-                    continue
-
-                arrow = _c(_GREEN, "\u2193") if delta > 0.01 else _c(_YELLOW, "\u2192")
-                print(f"  {it+1:>3d}.  {mut_name:28s}  {arrow}  {new_prob:.4f}  ({delta:+.4f})")
-
-                current = candidate
-                current_prob = new_prob
-                applied = True
-                break
-            if applied:
-                break
-
-        if not applied:
-            print(f"\n  {_c(_DIM, 'No further targeted mutations available.')}")
+        if not triggers:
+            print(f"  {_c(_DIM, 'No detection triggers identified.')}")
             break
+
+        print(f"  {_c(_DIM, f'[{it+1}] Rewriting with Claude (targeting {len(triggers[:6])} triggers)...')}")
+
+        prompt = _build_rewrite_prompt(current, triggers, attempt=it + 1)
+        candidate = _call_claude(prompt)
+
+        if not candidate:
+            break
+
+        candidate = normalize_text(candidate)
+        new_prob = surrogate.prob(candidate)
+        delta = current_prob - new_prob
+
+        arrow = _c(_GREEN, "\u2193") if delta > 0.01 else (_c(_YELLOW, "\u2192") if delta > -0.01 else _c(_RED, "\u2191"))
+        print(f"  {it+1:>3d}.  Claude rewrite               {arrow}  {new_prob:.4f}  ({delta:+.4f})")
+
+        if new_prob >= current_prob:
+            print(f"  {_c(_DIM, '      Rewrite did not improve score. Retrying...')}")
+            continue
+
+        current = candidate
+        current_prob = new_prob
 
     cls = surrogate.classify(current)
     passed = current_prob <= target
@@ -729,36 +786,21 @@ def main() -> None:
         elif mode == "rewrite":
             current = normalize_text(text)
             cp = surrogate.prob(current)
-            fp: Set[Tuple[str, int]] = set()
-            for _ in range(args.max_iterations):
+            for attempt in range(args.max_iterations):
                 if cp <= args.target:
                     break
                 trigs = _get_triggers(surrogate, current)
-                tid = hash(current)
-                did = False
-                for trig in trigs:
-                    fn = trig["feature"]
-                    if fn not in _FEATURE_MUTATIONS:
-                        continue
-                    for mn, mf in _FEATURE_MUTATIONS[fn]:
-                        pk = (mn, tid)
-                        if pk in fp:
-                            continue
-                        c = mf(current)
-                        if c == current:
-                            fp.add(pk)
-                            continue
-                        np_ = surrogate.prob(c)
-                        if cp - np_ < 0.001:
-                            fp.add(pk)
-                            continue
-                        current, cp = c, np_
-                        did = True
-                        break
-                    if did:
-                        break
-                if not did:
+                if not trigs:
                     break
+                prompt = _build_rewrite_prompt(current, trigs, attempt + 1)
+                candidate = _call_claude(prompt)
+                if not candidate:
+                    break
+                candidate = normalize_text(candidate)
+                np_ = surrogate.prob(candidate)
+                if np_ >= cp:
+                    continue
+                current, cp = candidate, np_
             print(json.dumps({
                 "passed": cp <= args.target,
                 "original_prob": round(surrogate.prob(normalize_text(text)), 6),
