@@ -108,52 +108,47 @@ The extracted surrogate doubles as an offline evasion oracle. `evade.py` demonst
 
 Three modes, all fully offline (no API key, no GPU, no network):
 
-**Score** -- predict GPTZero's classification for any text:
+Launch the interactive shell:
 
 ```bash
 cd gptzero-audit
-python evade.py score "The structured methodology demonstrates significant potential for operational optimization."
+python evade.py
 ```
 
+The model downloads automatically from Modal on first run. After that, everything is offline.
+
 ```
+   _____ _____ _____ _____
+  |   __|  _  |_   _|__   |___ ___ ___
+  |  |  |   __| | | |   -_| . |  _| . |
+  |_____|__|    |_| |_____|___|_| |___|  evasion tool
+
+  Surrogate model loaded. Ready.
+  Type help for commands or just start with score.
+
+  gptzero > score The structured methodology demonstrates significant potential.
+
   GPTZero Prediction  (surrogate)
-  ============================================
+  ────────────────────────────────────────────────────────────────
   AI Probability   0.8476  █████████████████████████░░░░░
   Class            ai
   Verdict          DETECTED AS AI
-```
 
-**Diagnose** -- identify which features trigger detection and what to change:
+  gptzero > diagnose The structured methodology demonstrates significant potential.
 
-```bash
-python evade.py diagnose "The structured methodology demonstrates significant potential for operational optimization."
-```
-
-```
-  Detection Triggers  (features pushing the score toward AI)
-  ----------------------------------------------------------------------
+  Detection Triggers
+  ────────────────────────────────────────────────────────────────
   ██████████  Word length
        Value: 7.125  |  Human baseline: 4.500
        Fix: Use simpler, shorter words where possible.
-
   ██████  Contractions
        Value: 0.000  |  Human baseline: 3.000
        Fix: Add contractions: don't, can't, it's, won't, I've, etc.
 
-  Flagged Sentences  (ranked by individual AI probability)
-  ----------------------------------------------------------------------
-  [0.85]  The structured methodology demonstrates significant potential...
-```
+  gptzero > rewrite The structured methodology demonstrates significant potential.
 
-**Rewrite** -- iteratively mutate text until it passes as human:
-
-```bash
-python evade.py rewrite "The structured methodology demonstrates significant potential." --target 0.30
-```
-
-```
   Rewrite  Target: < 0.30  |  Max iterations: 20
-  ============================================================
+  ════════════════════════════════════════════════════════════════
   Start   █████████████████████████░░░░░  0.8476
 
     1.  Inject first-person           ↓  0.5927  (+0.2549)
@@ -164,22 +159,14 @@ python evade.py rewrite "The structured methodology demonstrates significant pot
   Result   PASSED  ████████░░░░░░░░░░░░░░░░░░░░░░  0.2949  (human)
 ```
 
-All modes accept `--stdin` for piped input and `--json` for machine-readable output. See `python evade.py --help` for full options.
+Commands: `score` / `s`, `diagnose` / `d`, `rewrite` / `r`, `target`, `iterations`, `help`, `quit`. Text can be typed inline after the command or pasted when prompted. Shorthand works everywhere (`s`, `d`, `r`, `q`).
 
-To use the real trained model (downloaded from Modal):
+Non-interactive use:
 
 ```bash
-cd gptzero-audit
-python -c "
-import modal_app
-from pathlib import Path
-with modal_app.app.run():
-    data = modal_app.download_model.remote()
-    out = Path('models/ppl_surrogate/ppl_surrogate.pkl')
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(data)
-    print(f'Downloaded {len(data)} bytes')
-"
+python evade.py score "Your text" --json
+echo "Your text" | python evade.py score --stdin
+python evade.py rewrite "Your text" --target 0.20 --max-iterations 15
 ```
 
 ## Project Structure
