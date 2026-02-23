@@ -528,7 +528,7 @@ def build_and_label_corpus(config: Dict[str, object]) -> Dict[str, object]:
     gpu="A100",
 )
 def train_neural_surrogate(config: Dict[str, object]) -> Dict[str, object]:
-    """Phase 2: Fine-tune DistilBERT surrogate on labeled corpus."""
+    """Fine-tune DistilBERT surrogate on labeled corpus."""
     import sys
 
     if REMOTE_PROJECT_DIR not in sys.path:
@@ -537,6 +537,24 @@ def train_neural_surrogate(config: Dict[str, object]) -> Dict[str, object]:
     from src.neural_surrogate import train
 
     return train(config)
+
+
+@app.function(
+    image=gpu_image,
+    volumes={"/artifacts": artifacts_volume},
+    timeout=3 * 60 * 60,
+    gpu="A100",
+)
+def train_perplexity_surrogate(config: Dict[str, object]) -> Dict[str, object]:
+    """Train GBM surrogate using GPT-2 perplexity features."""
+    import sys
+
+    if REMOTE_PROJECT_DIR not in sys.path:
+        sys.path.insert(0, REMOTE_PROJECT_DIR)
+
+    from src.perplexity_surrogate import train_perplexity_surrogate
+
+    return train_perplexity_surrogate(config)
 
 
 @app.function(
@@ -592,8 +610,8 @@ def main(
     timeout=3 * 60 * 60,
     secrets=[modal.Secret.from_name("gptzero-audit-secrets")],
 )
-def build_v5_training(config: Dict[str, object]) -> Dict[str, object]:
-    """Build combined v5+v6 training set using cached GPTZero responses."""
+def build_diverse_training(config: Dict[str, object]) -> Dict[str, object]:
+    """Build diverse training set with multi-seed variant generation + cache merge."""
     import os
     import sys
 
@@ -602,14 +620,16 @@ def build_v5_training(config: Dict[str, object]) -> Dict[str, object]:
 
     api_key = os.environ.get("GPTZERO_API_KEY") or os.environ.get("GPT_ZERO_API_KEY")
 
-    from scripts.build_v5_training_set import build_v5_training_set
+    from scripts.build_diverse_training_set import build
 
-    return build_v5_training_set(
+    return build(
+        api_key=api_key,
         cache_dir=str(config.get("cache_dir", DEFAULT_OUTPUT_DIR)),
         output_dir=str(config.get("output_dir", DEFAULT_OUTPUT_DIR)),
-        variants_per_base=int(config.get("variants_per_base", 5)),
-        seed=int(config.get("seed", 42)),
-        api_key=api_key,
+        benchmark_seeds=config.get("benchmark_seeds", [42, 1337, 2026]),
+        diverse_seeds=config.get("diverse_seeds", list(range(100, 120))),
+        max_base_per_stratum=int(config.get("max_base_per_stratum", 20)),
+        variants_per_base=int(config.get("variants_per_base", 6)),
         delay=float(config.get("delay", 0.25)),
     )
 

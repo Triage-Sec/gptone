@@ -93,8 +93,15 @@ def run(
     cache = _load_cache(cache_path)
     print(f"Loaded {len(cache)} cached GPTZero responses")
 
-    print(f"Loading neural surrogate from {model_dir}...")
-    surrogate = GPTZeroSurrogate(model_dir)
+    model_type = str(config.get("model_type", "neural"))
+
+    if model_type == "perplexity":
+        from src.perplexity_surrogate import PerplexitySurrogate
+        print(f"Loading perplexity surrogate from {model_dir}...")
+        surrogate = PerplexitySurrogate(model_dir)
+    else:
+        print(f"Loading neural surrogate from {model_dir}...")
+        surrogate = GPTZeroSurrogate(model_dir)
 
     print(f"Loading pattern eval from {dataset_version}...")
     eval_records = _load_pattern_eval(dataset_version)
