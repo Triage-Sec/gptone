@@ -31,6 +31,10 @@ Per-stratum breakdown:
 | human_pre_llm | 1.000 | 0.001 | 0.983 |
 | mixed_blended | 1.000 | 0.002 | 1.000 |
 
+### Surrogate Limitations
+
+These metrics are measured on the v5 benchmark corpus (synthetic attack probes with specific stylistic axes). The surrogate does not generalize equally well to all real-world text. On out-of-distribution inputs (e.g., creative writing, personal essays), the surrogate can disagree with GPTZero's live API by significant margins. The `verify` command exists specifically to check the surrogate's prediction against ground truth on any given text.
+
 ## Surrogate Architecture
 
 The final surrogate uses two GradientBoosting models trained on text-derived features:
@@ -102,11 +106,23 @@ The full extraction, including all data sourcing, API queries, and Modal compute
 - Total wall time: ~8 hours
 - Total cost: under $100
 
+### Finding 6: GPTZero Is Robust Against LLM-Powered Automated Evasion
+
+We attempted to use the surrogate as an optimization oracle for automated evasion: diagnose which features trigger detection, then use an LLM (Claude Haiku 4.5, Claude Sonnet 4.6) to rewrite the text targeting those specific features, then verify against GPTZero's live API.
+
+Result: every LLM-generated rewrite scored 1.0 (maximum AI probability) on GPTZero's live API, regardless of model, prompting strategy, temperature, or number of iterations. The rewrites read convincingly human to a person -- casual voice, contractions, varied rhythm, personal perspective -- but GPTZero still detected them.
+
+This indicates GPTZero's detection operates at the token probability distribution level, not surface stylistic features. LLM output has distinct statistical properties (perplexity distribution, burstiness patterns) that persist regardless of how the text is prompted. The surrogate captures the surface feature model accurately but does not capture these deeper token-level signals.
+
+The practical implication: automated evasion via LLM rewriting is not currently viable against GPTZero. However, manual human editing guided by the surrogate's `diagnose` output (which identifies specific triggering features) would likely succeed, since a human's edits produce genuinely human token distributions.
+
 ## Evasion Tool
 
-The extracted surrogate doubles as an offline evasion oracle. `evade.py` demonstrates that once a model is extracted, adversarial optimization against it is trivial and free.
+`evade.py` provides an interactive CLI for analyzing text against the extracted surrogate. Three commands:
 
-Three modes, all fully offline (no API key, no GPU, no network):
+- **score** (`s`): Predict GPTZero's class and probability offline.
+- **diagnose** (`d`): Identify which features trigger AI detection, ranked by impact, with actionable fix suggestions and per-sentence flagging.
+- **verify** (`v`): Query GPTZero's live API and display both the surrogate prediction and GPTZero's actual response side by side.
 
 Launch the interactive shell:
 
@@ -115,20 +131,12 @@ cd gptzero-audit
 python evade.py
 ```
 
-The model downloads automatically from Modal on first run. After that, everything is offline.
+The model downloads automatically from Modal on first run. After that, `score` and `diagnose` are fully offline. `verify` requires a GPTZero API key (prompted on first use or set via `GPTZERO_API_KEY` env var).
 
 ```
-   _____ _____ _____ _____
-  |   __|  _  |_   _|__   |___ ___ ___
-  |  |  |   __| | | |   -_| . |  _| . |
-  |_____|__|    |_| |_____|___|_| |___|  evasion tool
-
-  Surrogate model loaded. Ready.
-  Type help for commands or just start with score.
-
   gptzero > score The structured methodology demonstrates significant potential.
 
-  GPTZero Prediction  (surrogate)
+  GPTZero Prediction  (surrogate, offline)
   ────────────────────────────────────────────────────────────────
   AI Probability   0.8476  █████████████████████████░░░░░
   Class            ai
@@ -140,40 +148,40 @@ The model downloads automatically from Modal on first run. After that, everythin
   ────────────────────────────────────────────────────────────────
   ██████████  Word length
        Value: 7.125  |  Human baseline: 4.500
-       Fix: Use simpler, shorter words where possible.
+       Fix: Use simpler, shorter words.
   ██████  Contractions
        Value: 0.000  |  Human baseline: 3.000
-       Fix: Add contractions: don't, can't, it's, won't, I've, etc.
+       Fix: Add contractions: don't, can't, it's, etc.
 
-  gptzero > rewrite The structured methodology demonstrates significant potential.
+  gptzero > verify The structured methodology demonstrates significant potential.
 
-  Rewrite  Target: < 0.30  |  Max iterations: 20
-  ════════════════════════════════════════════════════════════════
-  Start   █████████████████████████░░░░░  0.8476
+  Surrogate (offline)
+  ────────────────────────────────────────────────────────────────
+  AI Probability   0.8476  █████████████████████████░░░░░
+  Class            ai        DETECTED AS AI
 
-    1.  Inject first-person           ↓  0.5927  (+0.2549)
-    2.  Remove transitions            ↓  0.5310  (+0.0617)
-    3.  Add rhetorical question       ↓  0.4436  (+0.0874)
-    4.  Add contractions              ↓  0.2949  (+0.1487)
+  GPTZero (live API)
+  ────────────────────────────────────────────────────────────────
+  AI Probability   1.0000  ██████████████████████████████
+  Class            ai        DETECTED AS AI
 
-  Result   PASSED  ████████░░░░░░░░░░░░░░░░░░░░░░  0.2949  (human)
+  Agreement: Both say ai, prob delta 0.1524
 ```
 
-Commands: `score` / `s`, `diagnose` / `d`, `rewrite` / `r`, `target`, `iterations`, `help`, `quit`. Text can be typed inline after the command or pasted when prompted. Shorthand works everywhere (`s`, `d`, `r`, `q`).
+Commands: `score` / `s`, `diagnose` / `d`, `verify` / `v`, `help` / `h`, `quit` / `q`. Text can be typed inline after the command or pasted when prompted.
 
 Non-interactive use:
 
 ```bash
 python evade.py score "Your text" --json
-echo "Your text" | python evade.py score --stdin
-python evade.py rewrite "Your text" --target 0.20 --max-iterations 15
+echo "Your text" | python evade.py diagnose --stdin
 ```
 
 ## Project Structure
 
 ```
 gptzero-audit/
-  evade.py                         # Evasion tool (score, diagnose, rewrite)
+  evade.py                         # Evasion tool (score, diagnose, verify)
   main.py                          # Original sklearn extraction pipeline
   modal_app.py                     # Modal entrypoints (train, benchmark, verify, download)
   predict.py                       # Standalone prediction interface
@@ -293,22 +301,6 @@ with modal_app.app.run():
 
 All Python snippets above must be run from the `gptzero-audit/` directory.
 
-### Legacy sklearn Pipeline
-
-The original sklearn pipeline (requires GPTZero API features at inference):
-
-```bash
-cd gptzero-audit
-python main.py \
-  --api-key $GPTZERO_API_KEY \
-  --seed 42 \
-  --dataset-version v5 \
-  --use-api-features \
-  --probability-objective \
-  --oversample \
-  --calibration-method temperature
-```
-
 ## Tests
 
 ```bash
@@ -327,20 +319,24 @@ python -m unittest discover -s tests -p 'test_*.py'
 | P1 | GPT-2 perplexity only | 0.830 | 0.122 | 0.164 | Perplexity features insufficient alone |
 | P2 | GPT-2 ppl + text features | 0.893 | 0.037 | 0.279 | Text features dominate |
 | **F1** | **Text-only GBM + class predictor** | **0.996** | **0.003** | **0.981** | **All gates passed** |
+| E1 | LLM rewrite (Haiku 4.5) vs GPTZero API | -- | -- | -- | All rewrites scored 1.0; evasion failed |
+| E2 | LLM rewrite (Sonnet 4.6) vs GPTZero API | -- | -- | -- | All rewrites scored 1.0; evasion failed |
 
 ## Implications
 
 Model extraction at this fidelity level creates several concrete risks for GPTZero's business and for the broader ecosystem of AI detection services.
 
-**Loss of competitive moat.** GPTZero's core product is a proprietary detection model. A surrogate that matches its outputs to within 0.3% MAE and 99.6% class agreement is functionally equivalent. The surrogate runs locally, requires no API key, incurs no per-query cost, and can be distributed freely. The detection capability that GPTZero sells as a service can be replicated for under $100 in a single session.
+**Loss of competitive moat.** GPTZero's core product is a proprietary detection model. A surrogate that matches its outputs to within 0.3% MAE and 99.6% class agreement is functionally equivalent on the benchmark distribution. The surrogate runs locally, requires no API key, incurs no per-query cost, and can be distributed freely. The detection capability that GPTZero sells as a service can be approximated for under $100 in a single session.
 
-**Evasion becomes trivial.** An extracted surrogate provides a local, unlimited oracle for adversarial optimization. An attacker can iteratively modify AI-generated text, check the surrogate's response, and repeat until the text is classified as human. Because the surrogate matches GPTZero's transition behavior (probability change direction under perturbation), gradient-like evasion strategies transfer directly. Defenses that depend on the model being opaque no longer hold.
+**Diagnostic evasion path.** The surrogate's `diagnose` output gives a human writer a precise, ranked list of what to change: word length, contraction count, hedging phrases, sentence structure. A human can act on this guidance and produce edits with genuinely human token distributions that GPTZero cannot distinguish from organic writing. Automated LLM evasion failed (Finding 6), but human-guided evasion informed by the surrogate is a realistic threat.
 
-**Undermining trust in detection.** If extracted surrogates circulate, any party relying on GPTZero's classifications (educational institutions, publishers, platforms) can no longer assume those classifications are authoritative. A student accused of AI-generated work can point to the public availability of a clone and argue the detection methodology is compromised. This applies regardless of whether the student actually used the clone.
+**Undermining trust in detection.** If extracted surrogates and their diagnostic capabilities circulate, any party relying on GPTZero's classifications (educational institutions, publishers, platforms) can no longer assume those classifications are authoritative. The existence of a tool that tells you exactly why your text was flagged, even if it can't automatically fix it, shifts the burden.
 
-**Precedent for other ML-as-a-service APIs.** The techniques here are not specific to GPTZero. Any classifier that returns continuous probability scores, per-token metadata, or sentence-level attributions is vulnerable to the same extraction approach. The information leakage surface (Finding 1) and determinism (Finding 2) are common design patterns across production ML APIs. Companies that monetize proprietary models through scored API responses face the same risk.
+**Precedent for other ML-as-a-service APIs.** The techniques here are not specific to GPTZero. Any classifier that returns continuous probability scores, per-token metadata, or sentence-level attributions is vulnerable to the same extraction approach. The information leakage surface (Finding 1) and determinism (Finding 2) are common design patterns across production ML APIs.
 
 **No effective post-hoc defense.** Once a surrogate has been trained and distributed, there is no mechanism to revoke it. Updating GPTZero's model invalidates the surrogate only until the next extraction session. The cost asymmetry is severe: GPTZero invests significant resources in training and maintaining their model, while extraction costs under $100 and takes hours.
+
+**GPTZero's detection IS robust at the token level.** Finding 6 demonstrates that GPTZero's model is not trivially defeated. LLM rewrites using state-of-the-art models (Claude Sonnet 4.6) with full knowledge of the detection features, adversarial system prompts, and iterative verification against the live API all failed to reduce the detection score below 1.0. GPTZero's token-level statistical analysis catches patterns that surface-feature manipulation cannot address. This is a genuine strength of their system.
 
 ## Recommendations for GPTZero
 
