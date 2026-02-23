@@ -53,14 +53,47 @@ Strong on formal and AI-generated text (97-100%). Degrades on casual, personal, 
 
 GPTZero's detection is robust at the token probability level. Neither automated LLM rewriting nor manual editing of AI text reliably evades detection.
 
+## Quick Start
+
+The trained surrogate model ships with the repo via Git LFS at `gptzero-audit/models/ppl_surrogate/ppl_surrogate.pkl` (101 MB). It downloads automatically when you clone.
+
+```bash
+git clone https://github.com/Triage-Sec/gptone.git
+cd gptone/gptzero-audit
+pip install numpy scikit-learn
+```
+
+Run inference immediately -- no API keys, no GPU, no Modal:
+
+```python
+import pickle, numpy as np
+from src.features import extract_features
+
+with open("models/ppl_surrogate/ppl_surrogate.pkl", "rb") as f:
+    model = pickle.load(f)
+
+text = "The implementation framework requires systematic evaluation of measurable outcomes."
+vec, _ = extract_features(text)
+X = vec.reshape(1, -1)
+
+prob = float(np.clip(model["model"].predict(X)[0], 0.0, 1.0))
+label = model["class_model"].predict(X)[0]
+print(f"{prob:.4f}  {label}")  # e.g. "0.8476  ai"
+```
+
+Or use the interactive CLI:
+
+```bash
+python evade.py
+```
+
 ## Reproducing the Extraction
 
-The full extraction pipeline runs on [Modal](https://modal.com). Total cost: under $100. Total time: ~8 hours.
+The steps below reproduce the full extraction pipeline from scratch on [Modal](https://modal.com). This is only necessary to retrain the model or verify the results independently. Total cost: under $100. Total time: ~8 hours.
 
 ### Prerequisites
 
 ```bash
-cd gptzero-audit
 pip install -r requirements.lock
 pip install modal
 python3 -m modal setup
