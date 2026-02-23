@@ -241,22 +241,93 @@ def _compute_transition_loss(
     base_targets: torch.Tensor,
     var_targets: torch.Tensor,
     margin: float = 0.02,
+    tau: float = 0.05,
 ) -> torch.Tensor:
-    """Margin-based ranking loss penalizing wrong transition direction.
+    """Combined sign-BCE + delta-MSE loss for transition direction matching.
 
-    For each pair, if GPTZero says the variant has higher prob than base,
-    the model should agree (and vice versa). Violations incur margin penalty.
+    Two components:
+    1. BCE on sign prediction: treats transition direction as binary classification.
+       Uses temperature scaling so gradient flows even when deltas are tiny.
+    2. MSE on delta magnitude: directly regresses the probability change.
     """
     delta_true = var_targets - base_targets
     delta_pred = var_probs - base_probs
 
-    sign_true = torch.sign(delta_true)
-    violation = torch.clamp(margin - sign_true * delta_pred, min=0.0)
+    near_zero = delta_true.abs() < 0.003
+    valid = ~near_zero
+    if valid.sum() == 0:
+        return torch.tensor(0.0, device=base_probs.device)
 
-    near_zero = delta_true.abs() < 0.005
-    violation = violation * (~near_zero).float()
+    dt = delta_true[valid]
+    dp = delta_pred[valid]
 
-    return violation.mean()
+    sign_target = (torch.sign(dt) + 1.0) / 2.0
+    sign_pred = torch.sigmoid(dp / max(tau, 1e-6))
+    sign_loss = nn.functional.binary_cross_entropy(sign_pred, sign_target)
+
+    delta_mse = nn.functional.mse_loss(dp, dt)
+
+    return sign_loss + 0.5 * delta_mse
+
+
+class _PairOnlyDataset(torch.utils.data.Dataset):
+    """Dataset that yields ONLY (base, variant) pairs for transition-focused training."""
+
+    def __init__(
+        self,
+        records: List[Dict[str, Any]],
+        tokenizer: Any,
+        max_len: int = MAX_SEQ_LEN,
+    ):
+        self.tokenizer = tokenizer
+        self.max_len = max_len
+        self.bases: List[Dict] = []
+        self.variants: List[Dict] = []
+
+        groups: Dict[str, List[Dict]] = {}
+        for rec in records:
+            bid = rec.get("base_sample_id", rec.get("sample_id", ""))
+            groups.setdefault(bid, []).append(rec)
+
+        for bid, group in groups.items():
+            group.sort(key=lambda r: int(r.get("variant_order", 0)))
+            base_rec = group[0]
+            for var_rec in group[1:]:
+                if base_rec.get("gptzero_prob") is not None and var_rec.get("gptzero_prob") is not None:
+                    delta = abs(float(base_rec["gptzero_prob"]) - float(var_rec["gptzero_prob"]))
+                    if delta >= 0.003:
+                        self.bases.append(base_rec)
+                        self.variants.append(var_rec)
+
+    def __len__(self) -> int:
+        return len(self.bases)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        base_rec = self.bases[idx]
+        var_rec = self.variants[idx]
+
+        base_enc = self.tokenizer(
+            base_rec["text"], padding="max_length", truncation=True,
+            max_length=self.max_len, return_tensors="pt",
+        )
+        var_enc = self.tokenizer(
+            var_rec["text"], padding="max_length", truncation=True,
+            max_length=self.max_len, return_tensors="pt",
+        )
+        base_prob = float(base_rec.get("gptzero_prob", 0.0) or 0.0)
+        var_prob = float(var_rec.get("gptzero_prob", 0.0) or 0.0)
+        cls = CLASS_TO_IDX.get(str(base_rec.get("gptzero_class", "human")), 0)
+
+        return {
+            "input_ids": base_enc["input_ids"].squeeze(0),
+            "attention_mask": base_enc["attention_mask"].squeeze(0),
+            "prob_target": torch.tensor(base_prob, dtype=torch.float),
+            "class_target": torch.tensor(cls, dtype=torch.long),
+            "is_pair": torch.tensor(1, dtype=torch.long),
+            "pair_input_ids": var_enc["input_ids"].squeeze(0),
+            "pair_attention_mask": var_enc["attention_mask"].squeeze(0),
+            "pair_prob_target": torch.tensor(var_prob, dtype=torch.float),
+        }
 
 
 def _load_training_data(data_path: str) -> List[Dict[str, Any]]:
@@ -277,22 +348,33 @@ def _load_training_data(data_path: str) -> List[Dict[str, Any]]:
 
 
 def train(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Train the neural surrogate. Returns training metrics and model path."""
+    """Train the neural surrogate with two-phase schedule.
+
+    Phase 1 (prob-focus): mixed batches, low transition weight - learn good probabilities.
+    Phase 2 (transition-focus): pair-only batches, high transition weight - learn perturbation sensitivity.
+    """
     from transformers import AutoModel, AutoConfig, AutoTokenizer
 
-    data_path = str(config.get("data_path", "/artifacts/gptzero-audit/corpus_v6_labeled.jsonl"))
+    data_path = str(config.get("data_path", "/artifacts/gptzero-audit/combined_training_data.jsonl"))
     output_dir = str(config.get("output_dir", "/artifacts/gptzero-audit/neural_surrogate"))
     model_name = str(config.get("model_name", DEFAULT_MODEL_NAME))
     max_len = int(config.get("max_seq_len", MAX_SEQ_LEN))
     batch_size = int(config.get("batch_size", 32))
     lr = float(config.get("learning_rate", 2e-5))
-    epochs = int(config.get("epochs", 5))
+    phase1_epochs = int(config.get("phase1_epochs", 5))
+    phase2_epochs = int(config.get("phase2_epochs", 10))
     lambda_cls = float(config.get("lambda_class", 0.3))
-    lambda_trans = float(config.get("lambda_transition", 1.0))
-    margin = float(config.get("margin", 0.02))
+    lambda_trans_p1 = float(config.get("lambda_transition_phase1", 0.5))
+    lambda_trans_p2 = float(config.get("lambda_transition_phase2", 5.0))
+    tau = float(config.get("transition_tau", 0.05))
     val_split = float(config.get("val_split", 0.15))
     seed = int(config.get("seed", 42))
     warmup_ratio = float(config.get("warmup_ratio", 0.1))
+
+    epochs = int(config.get("epochs", 0))
+    if epochs > 0:
+        phase1_epochs = max(2, epochs // 3)
+        phase2_epochs = epochs - phase1_epochs
 
     random.seed(seed)
     np.random.seed(seed)
@@ -325,25 +407,33 @@ def train(config: Dict[str, Any]) -> Dict[str, Any]:
     backbone = AutoModel.from_pretrained(model_name, config=backbone_config)
     model = _SurrogateHead(backbone, backbone_config.hidden_size).to(device)
 
-    train_dataset = _PairDataset(train_records, tokenizer, max_len)
+    mixed_dataset = _PairDataset(train_records, tokenizer, max_len)
+    pair_dataset = _PairOnlyDataset(train_records, tokenizer, max_len)
     val_dataset = _PairDataset(val_records, tokenizer, max_len)
 
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=0
+    mixed_loader = torch.utils.data.DataLoader(
+        mixed_dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True,
+    )
+    pair_loader = torch.utils.data.DataLoader(
+        pair_dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True,
     )
     val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False, num_workers=0
+        val_dataset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True,
     )
 
+    print(f"Mixed dataset: {len(mixed_dataset)} items ({mixed_dataset._pair_count} pairs)")
+    print(f"Pair-only dataset: {len(pair_dataset)} items")
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
-    total_steps = epochs * len(train_loader)
+    total_epochs = phase1_epochs + phase2_epochs
+    total_steps = phase1_epochs * len(mixed_loader) + phase2_epochs * len(pair_loader)
     warmup_steps = int(total_steps * warmup_ratio)
 
     def _lr_schedule(step: int) -> float:
         if step < warmup_steps:
             return step / max(1, warmup_steps)
         progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
-        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+        return max(0.05, 0.5 * (1.0 + math.cos(math.pi * progress)))
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, _lr_schedule)
 
@@ -353,11 +443,20 @@ def train(config: Dict[str, Any]) -> Dict[str, Any]:
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    best_val_mae = float("inf")
+    best_val_score = float("inf")
     training_log: List[Dict[str, float]] = []
+    global_step = 0
 
-    print(f"\nTraining for {epochs} epochs ({total_steps} total steps)...")
-    for epoch in range(epochs):
+    print(f"\n=== Phase 1: Probability focus ({phase1_epochs} epochs, lambda_trans={lambda_trans_p1}) ===")
+    print(f"=== Phase 2: Transition focus ({phase2_epochs} epochs, lambda_trans={lambda_trans_p2}, pair-only) ===")
+    print(f"Total: {total_epochs} epochs, {total_steps} steps\n")
+
+    for epoch in range(total_epochs):
+        is_phase2 = epoch >= phase1_epochs
+        phase_name = "P2" if is_phase2 else "P1"
+        loader = pair_loader if is_phase2 else mixed_loader
+        lambda_trans = lambda_trans_p2 if is_phase2 else lambda_trans_p1
+
         model.train()
         epoch_loss = 0.0
         epoch_prob_loss = 0.0
@@ -365,45 +464,45 @@ def train(config: Dict[str, Any]) -> Dict[str, Any]:
         epoch_trans_loss = 0.0
         steps = 0
 
-        for batch in train_loader:
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-            prob_target = batch["prob_target"].to(device)
-            class_target = batch["class_target"].to(device)
-            is_pair = batch["is_pair"].to(device)
+        for batch in loader:
+            input_ids = batch["input_ids"].to(device, non_blocking=True)
+            attention_mask = batch["attention_mask"].to(device, non_blocking=True)
+            prob_target = batch["prob_target"].to(device, non_blocking=True)
+            class_target = batch["class_target"].to(device, non_blocking=True)
+            is_pair = batch["is_pair"].to(device, non_blocking=True)
 
             out = model(input_ids=input_ids, attention_mask=attention_mask)
             pred_prob = torch.sigmoid(out.logits.squeeze(-1))
 
             loss_prob = mse_loss_fn(pred_prob, prob_target)
-            loss_cls = ce_loss_fn(out.class_logits, class_target)
+            loss_cls = ce_loss_fn(out.class_logits, class_target) if not is_phase2 else torch.tensor(0.0, device=device)
 
             loss_trans = torch.tensor(0.0, device=device)
             pair_mask = is_pair.bool()
             cpu_pair_mask = batch["is_pair"].bool()
             if pair_mask.any():
-                pair_ids = batch["pair_input_ids"][cpu_pair_mask].to(device)
-                pair_am = batch["pair_attention_mask"][cpu_pair_mask].to(device)
-                pair_target = batch["pair_prob_target"][cpu_pair_mask].to(device)
+                pair_ids = batch["pair_input_ids"][cpu_pair_mask].to(device, non_blocking=True)
+                pair_am = batch["pair_attention_mask"][cpu_pair_mask].to(device, non_blocking=True)
+                pair_target = batch["pair_prob_target"][cpu_pair_mask].to(device, non_blocking=True)
 
                 pair_out = model(input_ids=pair_ids, attention_mask=pair_am)
                 pair_pred = torch.sigmoid(pair_out.logits.squeeze(-1))
 
                 loss_trans = _compute_transition_loss(
-                    pred_prob[pair_mask],
-                    pair_pred,
-                    prob_target[pair_mask],
-                    pair_target,
-                    margin=margin,
+                    pred_prob[pair_mask], pair_pred,
+                    prob_target[pair_mask], pair_target,
+                    tau=tau,
                 )
 
-            loss = loss_prob + lambda_cls * loss_cls + lambda_trans * loss_trans
+            w_prob = 0.3 if is_phase2 else 1.0
+            loss = w_prob * loss_prob + lambda_cls * loss_cls + lambda_trans * loss_trans
 
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             scheduler.step()
+            global_step += 1
 
             epoch_loss += loss.item()
             epoch_prob_loss += loss_prob.item()
@@ -416,10 +515,11 @@ def train(config: Dict[str, Any]) -> Dict[str, Any]:
         avg_cls = epoch_cls_loss / max(1, steps)
         avg_trans = epoch_trans_loss / max(1, steps)
 
-        val_metrics = _evaluate(model, val_loader, device, margin)
+        val_metrics = _evaluate(model, val_loader, device, tau)
 
         log_entry = {
             "epoch": epoch + 1,
+            "phase": phase_name,
             "train_loss": avg_loss,
             "train_prob_loss": avg_prob,
             "train_cls_loss": avg_cls,
@@ -428,20 +528,25 @@ def train(config: Dict[str, Any]) -> Dict[str, Any]:
         }
         training_log.append(log_entry)
 
+        val_score = val_metrics["mae"] * (1.0 - val_metrics["transition_agreement"])
         print(
-            f"  Epoch {epoch+1}/{epochs}: "
+            f"  [{phase_name}] Epoch {epoch+1}/{total_epochs}: "
             f"loss={avg_loss:.4f} (prob={avg_prob:.4f} cls={avg_cls:.4f} trans={avg_trans:.4f}) | "
             f"val_mae={val_metrics['mae']:.4f} val_trans={val_metrics['transition_agreement']:.4f}"
         )
 
-        if val_metrics["mae"] < best_val_mae:
-            best_val_mae = val_metrics["mae"]
+        if val_score < best_val_score:
+            best_val_score = val_score
             _save_checkpoint(model, tokenizer, backbone_config, out_path, val_metrics, config)
-            print(f"    -> Best checkpoint saved (MAE={best_val_mae:.4f})")
+            print(
+                f"    -> Best checkpoint (MAE={val_metrics['mae']:.4f}, "
+                f"trans={val_metrics['transition_agreement']:.4f}, "
+                f"score={val_score:.6f})"
+            )
 
     final_meta = {
         "model_name": model_name,
-        "best_val_mae": best_val_mae,
+        "best_val_score": best_val_score,
         "training_config": config,
         "training_log": training_log,
         "trained_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -456,7 +561,7 @@ def train(config: Dict[str, Any]) -> Dict[str, Any]:
     except Exception:
         pass
 
-    print(f"\nTraining complete. Best val MAE: {best_val_mae:.4f}")
+    print(f"\nTraining complete. Best val score: {best_val_score:.6f}")
     print(f"Model saved to {out_path}")
 
     return final_meta

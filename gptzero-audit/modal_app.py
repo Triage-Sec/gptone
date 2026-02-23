@@ -524,8 +524,8 @@ def build_and_label_corpus(config: Dict[str, object]) -> Dict[str, object]:
 @app.function(
     image=gpu_image,
     volumes={"/artifacts": artifacts_volume},
-    timeout=2 * 60 * 60,
-    gpu="A10G",
+    timeout=3 * 60 * 60,
+    gpu="A100",
 )
 def train_neural_surrogate(config: Dict[str, object]) -> Dict[str, object]:
     """Phase 2: Fine-tune DistilBERT surrogate on labeled corpus."""
@@ -544,7 +544,7 @@ def train_neural_surrogate(config: Dict[str, object]) -> Dict[str, object]:
     volumes={"/artifacts": artifacts_volume},
     timeout=4 * 60 * 60,
     secrets=[modal.Secret.from_name("gptzero-audit-secrets")],
-    gpu="A10G",
+    gpu="A100",
 )
 def run_neural_pattern_benchmark(config: Dict[str, object]) -> Dict[str, object]:
     """Phase 3: Run pattern benchmark with neural surrogate."""
