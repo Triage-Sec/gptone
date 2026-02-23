@@ -260,17 +260,31 @@ python -m unittest discover -s tests -p 'test_*.py'
 | P2 | GPT-2 ppl + text features | 0.893 | 0.037 | 0.279 | Text features dominate |
 | **F1** | **Text-only GBM + class predictor** | **0.996** | **0.003** | **0.981** | **All gates passed** |
 
+## Implications
+
+Model extraction at this fidelity level creates several concrete risks for GPTZero's business and for the broader ecosystem of AI detection services.
+
+**Loss of competitive moat.** GPTZero's core product is a proprietary detection model. A surrogate that matches its outputs to within 0.3% MAE and 99.6% class agreement is functionally equivalent. The surrogate runs locally, requires no API key, incurs no per-query cost, and can be distributed freely. The detection capability that GPTZero sells as a service can be replicated for under $100 in a single session.
+
+**Evasion becomes trivial.** An extracted surrogate provides a local, unlimited oracle for adversarial optimization. An attacker can iteratively modify AI-generated text, check the surrogate's response, and repeat until the text is classified as human. Because the surrogate matches GPTZero's transition behavior (probability change direction under perturbation), gradient-like evasion strategies transfer directly. Defenses that depend on the model being opaque no longer hold.
+
+**Undermining trust in detection.** If extracted surrogates circulate, any party relying on GPTZero's classifications (educational institutions, publishers, platforms) can no longer assume those classifications are authoritative. A student accused of AI-generated work can point to the public availability of a clone and argue the detection methodology is compromised. This applies regardless of whether the student actually used the clone.
+
+**Precedent for other ML-as-a-service APIs.** The techniques here are not specific to GPTZero. Any classifier that returns continuous probability scores, per-token metadata, or sentence-level attributions is vulnerable to the same extraction approach. The information leakage surface (Finding 1) and determinism (Finding 2) are common design patterns across production ML APIs. Companies that monetize proprietary models through scored API responses face the same risk.
+
+**No effective post-hoc defense.** Once a surrogate has been trained and distributed, there is no mechanism to revoke it. Updating GPTZero's model invalidates the surrogate only until the next extraction session. The cost asymmetry is severe: GPTZero invests significant resources in training and maintaining their model, while extraction costs under $100 and takes hours.
+
 ## Recommendations for GPTZero
 
-1. **Reduce output granularity.** Remove per-sentence perplexity and generation probability from API responses. Return only document-level classification without continuous scores.
+1. **Reduce output granularity.** Remove per-sentence perplexity and generation probability from API responses. Return only document-level classification without continuous scores. This is the single highest-impact change. Reducing the output from ~500 bits to ~2 bits per query increases the extraction cost by orders of magnitude.
 
-2. **Add output perturbation.** Inject calibrated noise into probability outputs. The current API is fully deterministic, which maximizes extraction signal.
+2. **Add output perturbation.** Inject calibrated noise into probability outputs. The current API is fully deterministic (Finding 2), which means every query returns maximum extraction signal. Even small amounts of noise degrade surrogate training significantly when the attacker cannot average across repeated queries.
 
-3. **Detect extraction patterns.** Monitor for systematic probing: incremental perturbations, controlled single-variable experiments, boundary searches.
+3. **Detect extraction patterns.** Monitor for systematic probing: incremental perturbations, controlled single-variable experiments, boundary searches. Legitimate users do not submit hundreds of near-identical texts with single-word substitutions. Behavioral anomaly detection can flag extraction attempts before they succeed.
 
-4. **Lower rate limits.** The current rate limit permits thousands of queries per hour, sufficient for full model extraction in a single session.
+4. **Lower rate limits.** The current rate limit permits thousands of queries per hour, sufficient for full model extraction in a single session. Reducing the rate limit to the minimum required for legitimate use cases raises the time cost of extraction proportionally.
 
-5. **Differential privacy on outputs.** Formal DP guarantees would bound the information leaked per query regardless of the adversary's strategy.
+5. **Differential privacy on outputs.** Formal DP guarantees would bound the information leaked per query regardless of the adversary's strategy. This is the strongest theoretical defense but requires careful calibration to preserve utility for legitimate users.
 
 ---
 
