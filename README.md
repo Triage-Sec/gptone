@@ -102,12 +102,93 @@ The full extraction, including all data sourcing, API queries, and Modal compute
 - Total wall time: ~8 hours
 - Total cost: under $100
 
+## Evasion Tool
+
+The extracted surrogate doubles as an offline evasion oracle. `evade.py` demonstrates that once a model is extracted, adversarial optimization against it is trivial and free.
+
+Three modes, all fully offline (no API key, no GPU, no network):
+
+**Score** -- predict GPTZero's classification for any text:
+
+```bash
+cd gptzero-audit
+python evade.py score "The structured methodology demonstrates significant potential for operational optimization."
+```
+
+```
+  GPTZero Prediction  (surrogate)
+  ============================================
+  AI Probability   0.8476  █████████████████████████░░░░░
+  Class            ai
+  Verdict          DETECTED AS AI
+```
+
+**Diagnose** -- identify which features trigger detection and what to change:
+
+```bash
+python evade.py diagnose "The structured methodology demonstrates significant potential for operational optimization."
+```
+
+```
+  Detection Triggers  (features pushing the score toward AI)
+  ----------------------------------------------------------------------
+  ██████████  Word length
+       Value: 7.125  |  Human baseline: 4.500
+       Fix: Use simpler, shorter words where possible.
+
+  ██████  Contractions
+       Value: 0.000  |  Human baseline: 3.000
+       Fix: Add contractions: don't, can't, it's, won't, I've, etc.
+
+  Flagged Sentences  (ranked by individual AI probability)
+  ----------------------------------------------------------------------
+  [0.85]  The structured methodology demonstrates significant potential...
+```
+
+**Rewrite** -- iteratively mutate text until it passes as human:
+
+```bash
+python evade.py rewrite "The structured methodology demonstrates significant potential." --target 0.30
+```
+
+```
+  Rewrite  Target: < 0.30  |  Max iterations: 20
+  ============================================================
+  Start   █████████████████████████░░░░░  0.8476
+
+    1.  Inject first-person           ↓  0.5927  (+0.2549)
+    2.  Remove transitions            ↓  0.5310  (+0.0617)
+    3.  Add rhetorical question       ↓  0.4436  (+0.0874)
+    4.  Add contractions              ↓  0.2949  (+0.1487)
+
+  Result   PASSED  ████████░░░░░░░░░░░░░░░░░░░░░░  0.2949  (human)
+```
+
+All modes accept `--stdin` for piped input and `--json` for machine-readable output. See `python evade.py --help` for full options.
+
+To use the real trained model (downloaded from Modal):
+
+```bash
+cd gptzero-audit
+python -c "
+import modal_app
+from pathlib import Path
+with modal_app.app.run():
+    data = modal_app.download_model.remote()
+    out = Path('models/ppl_surrogate/ppl_surrogate.pkl')
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(data)
+    print(f'Downloaded {len(data)} bytes')
+"
+```
+
 ## Project Structure
 
 ```
 gptzero-audit/
+  evade.py                         # Evasion tool (score, diagnose, rewrite)
   main.py                          # Original sklearn extraction pipeline
-  modal_app.py                     # Modal entrypoints (train, benchmark, verify)
+  modal_app.py                     # Modal entrypoints (train, benchmark, verify, download)
   predict.py                       # Standalone prediction interface
   requirements.lock                # Pinned dependencies for Modal
   src/
