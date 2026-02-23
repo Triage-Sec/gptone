@@ -156,18 +156,9 @@ The `gate_check` object reports whether all three metrics meet their targets (ag
 
 All Python snippets must be run from the `gptzero-audit/` directory.
 
-### Step 4: Download Model Locally
+### Pre-Trained Model
 
-```python
-import modal_app
-from pathlib import Path
-
-with modal_app.app.run():
-    data = modal_app.download_model.remote()
-    out = Path("models/ppl_surrogate/ppl_surrogate.pkl")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(data)
-```
+The trained surrogate model (101 MB) is included in the repository via Git LFS. It downloads automatically with `git clone`. No Modal access is needed to run inference or the evasion analysis tool -- only to reproduce the training pipeline from scratch.
 
 ## Surrogate Architecture
 
@@ -214,7 +205,7 @@ LLM rewrites (Claude Haiku 4.5, Sonnet 4.6) with full knowledge of detection fea
 
 ## Evasion Analysis Tool
 
-`evade.py` is an interactive CLI for analyzing text against the extracted surrogate. The model downloads automatically from Modal on first run.
+`evade.py` is an interactive CLI for analyzing text against the extracted surrogate. The pre-trained model ships with the repo via Git LFS.
 
 ```bash
 cd gptzero-audit

@@ -7,7 +7,10 @@ build/
 .venv/
 venv/
 gptzero-audit/data/
-gptzero-audit/models/
+gptzero-audit/models/*
+!gptzero-audit/models/ppl_surrogate/
+gptzero-audit/models/ppl_surrogate/*
+!gptzero-audit/models/ppl_surrogate/ppl_surrogate.pkl
 gptzero-audit/report/
 gptzero-audit/artifacts/
 gptzero-audit/runs/

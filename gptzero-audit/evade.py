@@ -116,29 +116,20 @@ class Surrogate:
 
 
 def _ensure_model() -> Surrogate:
+    if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 1000:
+        return Surrogate(MODEL_PATH)
+
+    print()
     if MODEL_PATH.exists():
-        return Surrogate(MODEL_PATH)
-    print()
-    print(f"  {_c(_YELLOW, 'Model not found locally.')}")
-    print(f"  Downloading trained surrogate from Modal...")
-    print()
-    try:
-        import modal_app
-        with modal_app.app.run():
-            data = modal_app.download_model.remote()
-        MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        MODEL_PATH.write_bytes(data)
-        mb = len(data) / (1024 * 1024)
-        print(f"  {_c(_GREEN, 'Downloaded')} {mb:.1f} MB")
+        print(f"  {_c(_YELLOW, 'Model file is a Git LFS pointer. Run: git lfs pull')}")
+    else:
+        print(f"  {_c(_YELLOW, 'Model not found at')} {MODEL_PATH}")
+        print(f"  The model ships with the repo via Git LFS.")
+        print(f"  If you cloned without LFS, run: git lfs pull")
         print()
-        return Surrogate(MODEL_PATH)
-    except ImportError:
-        print(f"  {_c(_RED, 'Error:')} modal package not installed.")
-        print(f"  Run: pip install modal && python3 -m modal setup")
-        sys.exit(1)
-    except Exception as e:
-        print(f"  {_c(_RED, 'Download failed:')} {e}")
-        sys.exit(1)
+        print(f"  Or download from Modal:")
+        print(f"    python -c \"import modal_app; ...\"  # see README")
+    sys.exit(1)
 
 
 # -- feature analysis --------------------------------------------------------
