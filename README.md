@@ -158,7 +158,50 @@ All Python snippets must be run from the `gptzero-audit/` directory.
 
 ### Pre-Trained Model
 
-The trained surrogate model (101 MB) is included in the repository via Git LFS. It downloads automatically with `git clone`. No Modal access is needed to run inference or the evasion analysis tool -- only to reproduce the training pipeline from scratch.
+The trained surrogate model (101 MB) is included in the repository via Git LFS. It downloads automatically with `git clone`. No Modal access is needed to run inference -- only to reproduce the training pipeline from scratch.
+
+#### Running the model directly
+
+```python
+import pickle
+import numpy as np
+from pathlib import Path
+from src.features import extract_features
+
+# Load
+with open("models/ppl_surrogate/ppl_surrogate.pkl", "rb") as f:
+    model = pickle.load(f)
+
+reg = model["model"]         # GradientBoostingRegressor -> probability
+cls = model["class_model"]   # GradientBoostingClassifier -> class label
+
+# Predict
+text = "Your text here."
+vec, _ = extract_features(text)
+X = vec.reshape(1, -1)
+
+prob = float(np.clip(reg.predict(X)[0], 0.0, 1.0))
+label = cls.predict(X)[0]   # "ai", "human", or "mixed"
+
+print(f"{prob:.4f}  {label}")
+```
+
+#### Batch inference
+
+```python
+from src.features import extract_features_batch
+
+texts = ["First document...", "Second document...", "Third..."]
+X, _ = extract_features_batch(texts)
+
+probs = np.clip(reg.predict(X), 0.0, 1.0)
+labels = cls.predict(X)
+
+for text, p, l in zip(texts, probs, labels):
+    print(f"{p:.4f}  {l:6s}  {text[:60]}")
+```
+
+Run from the `gptzero-audit/` directory. Requires `numpy` and `scikit-learn`.
 
 ## Surrogate Architecture
 
