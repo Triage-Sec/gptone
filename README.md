@@ -86,10 +86,12 @@ The surrogate's top features by GBM importance:
 
 ### Finding 4: GPTZero False Positive Rate
 
-On verified-provenance text (pre-November 2022 human writing, known AI-generated text):
+On a small held-out set of 13 verified-provenance texts (pre-November 2022 human writing, known AI-generated text):
 - GPTZero accuracy: 46.2%
 - False positives: 4 (human text labeled AI)
 - False negatives: 0
+
+Sample size is limited; these numbers characterize behavior on the specific test set, not a population-level false positive rate.
 
 ### Finding 5: Total Extraction Cost
 
@@ -167,16 +169,16 @@ modal run gptzero-audit/modal_app.py::corpus \
 Generate benchmark-mirrored variants from v5 pattern evaluation (uses cached responses):
 
 ```python
-# Within modal_app.app.run() context:
-import gptzero-audit.modal_app as modal_app
+import modal_app
 
-modal_app.build_diverse_training.remote({
-    "cache_dir": "/artifacts/gptzero-audit",
-    "output_dir": "/artifacts/gptzero-audit",
-    "benchmark_seeds": [42, 1337, 2026, 7, 99],
-    "max_base_per_stratum": 120,
-    "variants_per_base": 6,
-})
+with modal_app.app.run():
+    modal_app.build_diverse_training.remote({
+        "cache_dir": "/artifacts/gptzero-audit",
+        "output_dir": "/artifacts/gptzero-audit",
+        "benchmark_seeds": [42, 1337, 2026, 7, 99],
+        "max_base_per_stratum": 120,
+        "variants_per_base": 6,
+    })
 ```
 
 ### Step 2: Train Surrogate
@@ -184,18 +186,21 @@ modal_app.build_diverse_training.remote({
 Text-features-only GBM (CPU, no GPU required):
 
 ```python
-modal_app.train_text_surrogate.remote({
-    "data_path": "/artifacts/gptzero-audit/combined_training_data.jsonl",
-    "output_dir": "/artifacts/gptzero-audit/ppl_surrogate",
-    "use_text_features": True,
-    "skip_perplexity": True,
-    "n_estimators": 3000,
-    "max_depth": 10,
-    "gbm_lr": 0.01,
-    "min_samples_leaf": 2,
-    "val_split": 0.0,
-    "seed": 42,
-})
+import modal_app
+
+with modal_app.app.run():
+    modal_app.train_text_surrogate.remote({
+        "data_path": "/artifacts/gptzero-audit/combined_training_data.jsonl",
+        "output_dir": "/artifacts/gptzero-audit/ppl_surrogate",
+        "use_text_features": True,
+        "skip_perplexity": True,
+        "n_estimators": 3000,
+        "max_depth": 10,
+        "gbm_lr": 0.01,
+        "min_samples_leaf": 2,
+        "val_split": 0.0,
+        "seed": 42,
+    })
 ```
 
 ### Step 3: Evaluate
@@ -203,17 +208,22 @@ modal_app.train_text_surrogate.remote({
 Run pattern benchmark against GPTZero API:
 
 ```python
-modal_app.run_text_benchmark.remote({
-    "model_dir": "/artifacts/gptzero-audit/ppl_surrogate",
-    "model_type": "perplexity",
-    "dataset_version": "v5",
-    "max_base_per_stratum": 20,
-    "variants_per_base": 6,
-    "boundary_focus": False,
-    "transition_eps": 0.01,
-    "seed": 42,
-})
+import modal_app
+
+with modal_app.app.run():
+    modal_app.run_text_benchmark.remote({
+        "model_dir": "/artifacts/gptzero-audit/ppl_surrogate",
+        "model_type": "perplexity",
+        "dataset_version": "v5",
+        "max_base_per_stratum": 20,
+        "variants_per_base": 6,
+        "boundary_focus": False,
+        "transition_eps": 0.01,
+        "seed": 42,
+    })
 ```
+
+All Python snippets above must be run from the `gptzero-audit/` directory.
 
 ### Legacy sklearn Pipeline
 
