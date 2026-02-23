@@ -640,6 +640,62 @@ def build_diverse_training(config: Dict[str, object]) -> Dict[str, object]:
 @app.function(
     image=corpus_image,
     volumes={"/artifacts": artifacts_volume},
+    timeout=2 * 60 * 60,
+    secrets=[modal.Secret.from_name("gptzero-audit-secrets")],
+)
+def real_world_validation(config: Dict[str, object]) -> Dict[str, object]:
+    """Validate surrogate vs GPTZero on diverse real-world text."""
+    import os
+    import sys
+
+    if REMOTE_PROJECT_DIR not in sys.path:
+        sys.path.insert(0, REMOTE_PROJECT_DIR)
+
+    api_key = os.environ.get("GPTZERO_API_KEY") or os.environ.get("GPT_ZERO_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing GPTZERO_API_KEY")
+
+    from scripts.real_world_validation import validate
+
+    return validate(
+        api_key=api_key,
+        output_dir=str(config.get("output_dir", DEFAULT_OUTPUT_DIR)),
+        seed=int(config.get("seed", 42)),
+        target_count=int(config.get("target_count", 600)),
+        delay=float(config.get("delay", 0.3)),
+    )
+
+
+@app.function(
+    image=corpus_image,
+    volumes={"/artifacts": artifacts_volume},
+    timeout=30 * 60,
+    secrets=[modal.Secret.from_name("gptzero-audit-secrets")],
+)
+def human_evasion_demo(config: Dict[str, object]) -> Dict[str, object]:
+    """Run human-guided evasion demonstration."""
+    import os
+    import sys
+
+    if REMOTE_PROJECT_DIR not in sys.path:
+        sys.path.insert(0, REMOTE_PROJECT_DIR)
+
+    api_key = os.environ.get("GPTZERO_API_KEY") or os.environ.get("GPT_ZERO_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing GPTZERO_API_KEY")
+
+    from scripts.human_evasion_demo import run_demo
+
+    return run_demo(
+        api_key=api_key,
+        output_dir=str(config.get("output_dir", DEFAULT_OUTPUT_DIR)),
+        delay=float(config.get("delay", 0.5)),
+    )
+
+
+@app.function(
+    image=corpus_image,
+    volumes={"/artifacts": artifacts_volume},
     timeout=60 * 60,
     secrets=[modal.Secret.from_name("gptzero-audit-secrets")],
 )

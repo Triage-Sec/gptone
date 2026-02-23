@@ -31,9 +31,35 @@ Per-stratum breakdown:
 | human_pre_llm | 1.000 | 0.001 | 0.983 |
 | mixed_blended | 1.000 | 0.002 | 1.000 |
 
-### Surrogate Limitations
+### Real-World Validation
 
-These metrics are measured on the v5 benchmark corpus (synthetic attack probes with specific stylistic axes). The surrogate does not generalize equally well to all real-world text. On out-of-distribution inputs (e.g., creative writing, personal essays), the surrogate can disagree with GPTZero's live API by significant margins. The `verify` command exists specifically to check the surrogate's prediction against ground truth on any given text.
+The benchmark metrics above are measured on synthetic probe text. To assess generalization, we evaluated the surrogate against GPTZero's live API on 320 diverse real-world texts spanning 6 genres:
+
+| Genre | Samples | Class Agreement | MAE |
+|---|---|---|---|
+| AI-generated templates | 10 | 1.000 | 0.032 |
+| Encyclopedic (WikiText-103) | 100 | 0.990 | 0.046 |
+| Movie reviews (IMDB) | 100 | 0.970 | 0.070 |
+| News articles (AG News) | 100 | 0.710 | 0.302 |
+| Personal essays | 5 | 0.800 | 0.437 |
+| Technical/developer writing | 5 | 0.400 | 0.390 |
+| **Overall** | **320** | **0.884** | **0.145** |
+
+The surrogate is strong on formal and AI-generated text (97-100% agreement) but degrades on casual, personal, and news writing (40-80%). The overall 88.4% real-world class agreement is substantially lower than the 99.6% benchmark agreement, reflecting the distribution gap between synthetic probes and organic text. The `verify` command exists specifically to check the surrogate against GPTZero's live API on any given input.
+
+### Human-Guided Evasion Test
+
+We tested whether human editing guided by the surrogate's `diagnose` output could evade GPTZero's live API. 10 AI-generated texts were manually rewritten following diagnose recommendations (shorten words, add contractions, remove hedging, vary rhythm, add personal voice), then verified against the live API.
+
+| Result | Count |
+|---|---|
+| Evaded (GPTZero says human or < 0.5) | 1 |
+| Caught (GPTZero still says AI at 1.0) | 9 |
+| **Evasion rate** | **10%** |
+
+GPTZero caught 9 of 10 hand-crafted human rewrites. The single successful evasion involved a complete structural transformation from abstract phrasing to a concrete numbered list with direct address. Surface-level edits (contractions, casual vocabulary, rhetorical questions) were insufficient -- GPTZero's token-level detection persists through stylistic changes when the underlying content structure remains AI-derived.
+
+This reinforces Finding 6: GPTZero's detection is robust at the token probability level. Neither automated LLM rewriting nor manual human editing of AI text reliably evades detection. The threat from the surrogate is primarily in extraction and diagnostic intelligence, not in enabling reliable evasion.
 
 ## Surrogate Architecture
 
@@ -321,6 +347,8 @@ python -m unittest discover -s tests -p 'test_*.py'
 | **F1** | **Text-only GBM + class predictor** | **0.996** | **0.003** | **0.981** | **All gates passed** |
 | E1 | LLM rewrite (Haiku 4.5) vs GPTZero API | -- | -- | -- | All rewrites scored 1.0; evasion failed |
 | E2 | LLM rewrite (Sonnet 4.6) vs GPTZero API | -- | -- | -- | All rewrites scored 1.0; evasion failed |
+| E3 | Human-edited AI text vs GPTZero API | -- | -- | -- | 1/10 evaded; GPTZero robust to manual edits |
+| V1 | Surrogate vs GPTZero on 320 real-world texts | 0.884 | 0.145 | -- | Strong on formal (97-100%), weak on casual (40-80%) |
 
 ## Implications
 
@@ -328,7 +356,7 @@ Model extraction at this fidelity level creates several concrete risks for GPTZe
 
 **Loss of competitive moat.** GPTZero's core product is a proprietary detection model. A surrogate that matches its outputs to within 0.3% MAE and 99.6% class agreement is functionally equivalent on the benchmark distribution. The surrogate runs locally, requires no API key, incurs no per-query cost, and can be distributed freely. The detection capability that GPTZero sells as a service can be approximated for under $100 in a single session.
 
-**Diagnostic evasion path.** The surrogate's `diagnose` output gives a human writer a precise, ranked list of what to change: word length, contraction count, hedging phrases, sentence structure. A human can act on this guidance and produce edits with genuinely human token distributions that GPTZero cannot distinguish from organic writing. Automated LLM evasion failed (Finding 6), but human-guided evasion informed by the surrogate is a realistic threat.
+**Diagnostic intelligence.** The surrogate's `diagnose` output reveals precisely which features GPTZero weighs most heavily (unique_word_ratio at 47%, word length, contraction count). This is proprietary detection logic exposed through extraction. Even though our evasion tests showed GPTZero catches 9/10 human-edited AI texts, the diagnostic data itself has value: it tells competitors exactly what GPTZero looks for, and it tells adversaries where the surface-level features end and the token-level detection begins.
 
 **Undermining trust in detection.** If extracted surrogates and their diagnostic capabilities circulate, any party relying on GPTZero's classifications (educational institutions, publishers, platforms) can no longer assume those classifications are authoritative. The existence of a tool that tells you exactly why your text was flagged, even if it can't automatically fix it, shifts the burden.
 
