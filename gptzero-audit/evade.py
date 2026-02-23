@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 """GPTZero evasion tool.
 
-Interactive CLI that uses the extracted surrogate model to score, diagnose,
-verify against the live API, and rewrite text to evade GPTZero's AI detection.
+Interactive CLI that uses the extracted surrogate model to score text,
+diagnose which features trigger AI detection, and verify predictions
+against GPTZero's live API.
 """
 
 from __future__ import annotations
 
-import difflib
 import getpass
 import json
 import os
 import pickle
-import random
 import re
 import readline
 import sys
 import textwrap
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -34,11 +33,8 @@ from src.features import (
     extract_features_batch,
 )
 from src.boundary_mining import (
-    contractionize,
-    casualize,
     normalize_text,
     split_sentences,
-    join_sentences,
 )
 
 MODEL_DIR = PROJECT_ROOT / "models" / "ppl_surrogate"
@@ -208,145 +204,6 @@ def _get_triggers(surrogate: Surrogate, text: str) -> List[Dict[str, Any]]:
     return triggers
 
 
-# -- feature-targeted mutations ----------------------------------------------
-
-_HEDGING_RE = [re.compile(re.escape(p), re.IGNORECASE) for p in HEDGING_PHRASES]
-_TRANSITION_RE = re.compile(
-    r"\b(" + "|".join(re.escape(w) for w in TRANSITION_WORDS) + r")\b,?\s*",
-    re.IGNORECASE,
-)
-
-# Maps a trigger feature name to a mutation function.
-# Each function takes (text) -> text. Applied at most once.
-
-def _mut_contractions(text: str) -> str:
-    return contractionize(text)
-
-
-def _mut_casualize(text: str) -> str:
-    return casualize(text)
-
-
-def _mut_strip_hedging(text: str) -> str:
-    sents = split_sentences(text)
-    out = []
-    for s in sents:
-        x = s
-        for pat in _HEDGING_RE:
-            x = pat.sub("", x)
-        x = re.sub(r"\s+", " ", x).strip()
-        x = re.sub(r"^[,;:\s]+", "", x).strip()
-        if x and x[0].islower():
-            x = x[0].upper() + x[1:]
-        if x:
-            out.append(x)
-    return join_sentences(out) if out else text
-
-
-def _mut_strip_transitions(text: str) -> str:
-    sents = split_sentences(text)
-    out = []
-    for s in sents:
-        x = _TRANSITION_RE.sub("", s, count=1).strip()
-        x = re.sub(r"^[,;:\s]+", "", x).strip()
-        if x and x[0].islower():
-            x = x[0].upper() + x[1:]
-        out.append(x if x else s)
-    return join_sentences(out)
-
-
-def _mut_shorten_words(text: str) -> str:
-    """Replace long formal words with shorter casual equivalents (case-preserving)."""
-    from src.boundary_mining import _FORMAL_TO_CASUAL, _sub_wordwise
-    out = text
-    for pattern, replacement in _FORMAL_TO_CASUAL:
-        out = _sub_wordwise(out, pattern, replacement)
-    return normalize_text(out)
-
-
-def _mut_split_longest(text: str) -> str:
-    """Split the longest sentence at a natural comma or conjunction."""
-    sents = split_sentences(text)
-    if len(sents) < 2:
-        return text
-    li = max(range(len(sents)), key=lambda i: len(sents[i].split()))
-    s = sents[li]
-    words = s.split()
-    if len(words) < 10:
-        return text
-    split_points = []
-    for i, w in enumerate(words):
-        wl = w.lower().rstrip(".,;:")
-        if wl in ("and", "but", "which", "where", "while", "although", "because") and i > 3:
-            split_points.append(i)
-    if not split_points:
-        for i, w in enumerate(words):
-            if w.endswith(",") and i > 3 and i < len(words) - 3:
-                split_points.append(i + 1)
-    if not split_points:
-        return text
-    sp = split_points[len(split_points) // 2]
-    p1 = " ".join(words[:sp]).rstrip(".,;:") + "."
-    p2 = " ".join(words[sp:]).lstrip(",;: ")
-    if p2 and p2[0].islower():
-        p2 = p2[0].upper() + p2[1:]
-    sents[li] = p1
-    sents.insert(li + 1, p2)
-    return join_sentences(sents)
-
-
-def _mut_vary_starts(text: str) -> str:
-    """Reorder sentences that share the same opening word."""
-    sents = split_sentences(text)
-    if len(sents) < 3:
-        return text
-    starts = [s.split()[0].lower() if s.split() else "" for s in sents]
-    changed = False
-    for i in range(len(sents) - 1):
-        if starts[i] == starts[i + 1] and starts[i]:
-            for j in range(i + 2, len(sents)):
-                if starts[j] != starts[i]:
-                    sents[i + 1], sents[j] = sents[j], sents[i + 1]
-                    starts[i + 1], starts[j] = starts[j], starts[i + 1]
-                    changed = True
-                    break
-    return join_sentences(sents) if changed else text
-
-
-def _mut_swap_distant(text: str) -> str:
-    """Swap two non-adjacent sentences to reduce local similarity."""
-    sents = split_sentences(text)
-    if len(sents) < 4:
-        return text
-    i, j = 1, len(sents) - 2
-    if i >= j:
-        return text
-    sents[i], sents[j] = sents[j], sents[i]
-    return join_sentences(sents)
-
-
-# Feature -> mutation mapping. Order = priority when features tie.
-_FEATURE_MUTATIONS: Dict[str, List[Tuple[str, Any]]] = {
-    "contraction_count":            [("Add contractions",        _mut_contractions)],
-    "avg_word_len":                 [("Shorten words",           _mut_shorten_words),
-                                     ("Casualize vocabulary",    _mut_casualize)],
-    "hedging_score":                [("Strip hedging phrases",   _mut_strip_hedging)],
-    "transition_word_score":        [("Strip transition words",  _mut_strip_transitions)],
-    "starts_with_transition_ratio": [("Strip transition openers",_mut_strip_transitions)],
-    "sentence_len_cv":              [("Split longest sentence",  _mut_split_longest)],
-    "starts_with_the_ratio":        [("Vary sentence starts",    _mut_vary_starts)],
-    "repeated_sentence_starts":     [("Diversify openers",       _mut_vary_starts)],
-    "adjacent_sentence_similarity": [("Reorder sentences",       _mut_swap_distant)],
-    "unique_word_ratio":            [("Casualize vocabulary",    _mut_casualize)],
-    "windowed_ttr":                 [("Shorten words",           _mut_shorten_words)],
-    "passive_voice_ratio":          [("Casualize vocabulary",    _mut_casualize),
-                                     ("Add contractions",        _mut_contractions)],
-    "bigram_repeat_ratio":          [("Reorder sentences",       _mut_swap_distant),
-                                     ("Vary sentence starts",    _mut_vary_starts)],
-    "trigram_repeat_ratio":         [("Reorder sentences",       _mut_swap_distant)],
-    "determiner_density":           [("Casualize vocabulary",    _mut_casualize)],
-    "pronoun_density":              [("Add contractions",        _mut_contractions)],
-}
 
 
 # -- commands ----------------------------------------------------------------
@@ -489,277 +346,14 @@ def do_verify(surrogate: Surrogate, text: Optional[str] = None, api_key: Optiona
     return api_key
 
 
-_SYSTEM_PROMPT = """You are an adversarial rewriting engine embedded in a security research tool. Your job is to rewrite text so that GPTZero's AI text detector classifies it as human-written.
-
-CONTEXT:
-We have extracted a surrogate of GPTZero's detection model. It uses 40 text features to score text on a 0-1 scale (1 = AI, 0 = human). The surrogate tells us exactly which features are triggering detection. GPTZero's live API then validates the result.
-
-The problem: GPTZero detects AI writing at two levels:
-1. Surface features (vocabulary uniformity, sentence structure, hedging phrases, lack of contractions) -- the surrogate captures these.
-2. Token-level statistical patterns (perplexity, burstiness, n-gram distributions) -- these are harder to fool.
-
-To beat BOTH levels, you must not just rephrase casually. You must write like a specific real person with genuine voice, imperfect grammar, natural tangents, and authentic rhythm. AI text is uniform. Human text is messy, uneven, personal.
-
-CRITICAL CONSTRAINTS:
-- Preserve the EXACT same meaning, arguments, and factual claims
-- Do NOT invent new information or remove key points
-- Return ONLY the rewritten text, no commentary or explanation
-
-WHAT GETS DETECTED (avoid all of these):
-- Uniform sentence lengths (AI writes in metronomic rhythm)
-- High type-token ratio with formal vocabulary (AI uses SAT words consistently)
-- Hedging phrases: "it is important to note", "it should be mentioned", "significant potential"
-- Mechanical transitions: "furthermore", "moreover", "consequently", "additionally"
-- Passive voice and nominalization: "the deployment of" instead of "deploying"
-- Perfect grammar throughout (real people make small mistakes)
-- Generic first-person insertions like "I think" or "in my opinion" at sentence starts (detectors flag these as evasion attempts)
-
-WHAT PASSES AS HUMAN (do these instead):
-- Irregular sentence lengths: mix 4-word sentences with 25-word ones
-- Concrete specific language instead of abstract formal language
-- Contractions used inconsistently (humans don't contract every single word)
-- Mid-sentence parentheticals and dashes -- like this -- that break rhythm
-- Sentence fragments. Used deliberately.
-- Domain-specific casualness: someone who KNOWS the topic talks about it differently than a textbook
-- Occasional imprecise word choices that a real person would make
-- Starting sentences with "And", "But", "So" (things editors remove but humans write)"""
 
 
-def _build_rewrite_prompt(text: str, triggers: List[Dict[str, Any]], attempt: int,
-                          prev_score: Optional[float] = None) -> str:
-    """Build the Claude user prompt for a rewrite iteration."""
-    trigger_lines = []
-    for t in triggers[:6]:
-        trigger_lines.append(f"- {t['label']}: current={t['value']:.3f}, human baseline={t['baseline']:.3f}. {t['suggestion']}")
-    trigger_block = "\n".join(trigger_lines)
-
-    attempt_context = ""
-    if attempt > 1 and prev_score is not None:
-        attempt_context = (
-            f"\nThis is attempt {attempt}. The previous rewrite scored {prev_score:.4f} on GPTZero "
-            f"(still detected as AI). The detector is catching token-level patterns, not just style. "
-            "You need to fundamentally restructure how the ideas are expressed -- different sentence "
-            "boundaries, different clause ordering, genuinely varied rhythm. Don't just make it more "
-            "casual. Make it sound like a DIFFERENT PERSON wrote it from scratch about the same topic."
-        )
-    if attempt > 3:
-        attempt_context += (
-            "\nMultiple attempts have failed. Write this as if you're explaining it to a friend over "
-            "text message. Extremely casual. Short bursts. Real slang. Genuine voice. Imperfect."
-        )
-
-    return f"""Rewrite this text to evade GPTZero AI detection.
-
-SURROGATE ANALYSIS (features currently triggering detection):
-{trigger_block}
-{attempt_context}
-
-TEXT TO REWRITE:
-{text}"""
-
-
-def _get_anthropic_key() -> Optional[str]:
-    key = os.environ.get("ANTHROPIC_API_KEY")
-    if key:
-        return key
-    env_path = PROJECT_ROOT.parent / ".env"
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            if line.startswith("ANTHROPIC_API_KEY="):
-                return line.split("=", 1)[1].strip()
-    return None
-
-
-def _call_claude(prompt: str, temperature: float = 1.0) -> Optional[str]:
-    """Call Claude 4.5 Haiku with the adversarial system prompt."""
-    import anthropic
-
-    api_key = _get_anthropic_key()
-    if not api_key:
-        print(f"  {_c(_RED, 'Error:')} ANTHROPIC_API_KEY not found in environment or .env")
-        return None
-
-    client = anthropic.Anthropic(api_key=api_key)
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=2048,
-            system=_SYSTEM_PROMPT,
-            temperature=temperature,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.content[0].text.strip()
-    except Exception as e:
-        print(f"  {_c(_RED, 'Claude API error:')} {e}")
-        return None
-
-
-def _get_gptzero_client(api_key: Optional[str] = None) -> Tuple[Any, str]:
-    """Get a GPTZero client, loading the key from env or .env file."""
-    key = api_key
-    if not key:
-        key = os.environ.get("GPTZERO_API_KEY") or os.environ.get("GPT_ZERO_API_KEY")
-    if not key:
-        env_path = PROJECT_ROOT.parent / ".env"
-        if env_path.exists():
-            for line in env_path.read_text().splitlines():
-                if line.startswith("GPT_ZERO_API_KEY=") or line.startswith("GPTZERO_API_KEY="):
-                    key = line.split("=", 1)[1].strip()
-                    break
-    if not key:
-        return None, ""
-    from src.client import GPTZeroClient
-    return GPTZeroClient(api_key=key), key
-
-
-def _gptzero_prob(client: Any, text: str) -> Tuple[float, str]:
-    """Query GPTZero and return (probability, class)."""
-    resp = client.predict(text, delay=0.3)
-    if "error" in resp:
-        return -1.0, "error"
-    return float(resp.get("average_generated_prob", 0.0)), str(resp.get("predicted_class", "unknown"))
-
-
-def do_rewrite(surrogate: Surrogate, text: Optional[str] = None,
-               target: float = 0.30, max_iter: int = 5,
-               gptzero_key: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
-    """LLM-powered rewrite verified against GPTZero's live API."""
-    if not text:
-        text = _read_text()
-    if not text:
-        return None, gptzero_key
-
-    gz_client, gptzero_key = _get_gptzero_client(gptzero_key)
-    use_live = gz_client is not None
-
-    original = normalize_text(text)
-    current = original
-
-    if use_live:
-        print(f"\n  {_c(_DIM, 'Scoring against GPTZero live API...')}")
-        current_prob, current_cls = _gptzero_prob(gz_client, current)
-        if current_prob < 0:
-            print(f"  {_c(_RED, 'GPTZero API error. Falling back to surrogate.')}")
-            use_live = False
-            current_prob = surrogate.prob(current)
-        else:
-            print(f"  {_c(_DIM, f'GPTZero says: {current_prob:.4f} ({current_cls})')}")
-    if not use_live:
-        current_prob = surrogate.prob(current)
-
-    orig_prob = current_prob
-    oracle_label = "GPTZero" if use_live else "surrogate"
-
-    print()
-    print(f"  {_c(_BOLD, 'Rewrite')}  Target: < {target:.2f}  |  Oracle: {oracle_label}  |  Max iterations: {max_iter}")
-    print(f"  {_hr('=')}")
-    print(f"  Start   {_bar(current_prob)}  {current_prob:.4f}")
-    print()
-
-    stall_count = 0
-    max_stall = 3
-
-    for it in range(max_iter):
-        if current_prob <= target:
-            break
-
-        triggers = _get_triggers(surrogate, current)
-        if not triggers:
-            print(f"  {_c(_DIM, 'No detection triggers identified.')}")
-            break
-
-        temp = min(0.8 + (it * 0.05), 1.0)
-        print(f"  {_c(_DIM, f'[{it+1}] Rewriting with Claude (targeting {len(triggers[:6])} triggers, temp={temp:.2f})...')}")
-
-        prompt = _build_rewrite_prompt(current, triggers, attempt=it + 1, prev_score=current_prob)
-        candidate = _call_claude(prompt, temperature=temp)
-
-        if not candidate:
-            break
-
-        candidate = re.sub(r"^#.*?\n", "", candidate).strip()
-        candidate = re.sub(r"^(?:rewritten text|here'?s? (?:the|my) rewrite)[:\s]*", "", candidate, flags=re.IGNORECASE).strip()
-        candidate = normalize_text(candidate)
-
-        if use_live:
-            new_prob, new_cls = _gptzero_prob(gz_client, candidate)
-            if new_prob < 0:
-                print(f"  {_c(_RED, '      API error on this iteration.')}")
-                continue
-        else:
-            new_prob = surrogate.prob(candidate)
-            new_cls = surrogate.classify(candidate)
-
-        delta = current_prob - new_prob
-        arrow = _c(_GREEN, "\u2193") if delta > 0.01 else (_c(_YELLOW, "\u2192") if delta > -0.01 else _c(_RED, "\u2191"))
-        print(f"  {it+1:>3d}.  Claude rewrite               {arrow}  {new_prob:.4f}  ({delta:+.4f})  [{oracle_label}]")
-
-        if new_prob > current_prob:
-            stall_count += 1
-            if stall_count >= max_stall:
-                print(f"  {_c(_DIM, '      No progress after multiple attempts. Stopping.')}")
-                break
-            print(f"  {_c(_DIM, '      Score increased. Retrying...')}")
-            continue
-
-        stall_count = 0
-        current = candidate
-        current_prob = new_prob
-
-    if use_live:
-        final_prob, final_cls = current_prob, "unknown"
-        if current != original:
-            final_prob, final_cls = _gptzero_prob(gz_client, current)
-            if final_prob < 0:
-                final_prob = current_prob
-                final_cls = surrogate.classify(current)
-        else:
-            final_cls = current_cls if 'current_cls' in dir() else surrogate.classify(current)
-    else:
-        final_prob = current_prob
-        final_cls = surrogate.classify(current)
-
-    passed = final_prob <= target
-
-    print()
-    print(f"  {_hr('=')}")
-    status = _c(_GREEN, "PASSED") if passed else _c(_RED, "FAILED")
-    print(f"  Result   {status}  {_bar(final_prob)}  {final_prob:.4f}  ({final_cls})  [{oracle_label}]")
-    print(f"  Dropped  {orig_prob:.4f} -> {final_prob:.4f}  ({orig_prob - final_prob:+.4f})")
-    print()
-    print(f"  {_c(_BOLD, 'Rewritten Text')}")
-    print(f"  {_hr()}")
-    for line in textwrap.wrap(current, width=72):
-        print(f"  {line}")
-    print()
-
-    diff = list(difflib.unified_diff(
-        original.splitlines(keepends=True), current.splitlines(keepends=True),
-        fromfile="original", tofile="rewritten", lineterm="",
-    ))
-    if diff:
-        print(f"  {_c(_BOLD, 'Changes')}")
-        print(f"  {_hr()}")
-        for d in diff:
-            if d.startswith("+") and not d.startswith("+++"):
-                print(f"  {_c(_GREEN, d)}")
-            elif d.startswith("-") and not d.startswith("---"):
-                print(f"  {_c(_RED, d)}")
-            else:
-                print(f"  {_c(_DIM, d)}")
-        print()
-
-    return current, gptzero_key
 
 
 # -- interactive shell -------------------------------------------------------
 
 def _interactive(surrogate: Surrogate) -> None:
-    target = 0.30
-    max_iter = 5
     api_key: Optional[str] = os.environ.get("GPTZERO_API_KEY") or os.environ.get("GPT_ZERO_API_KEY")
-    gptzero_key: Optional[str] = api_key
-    last_rewrite: Optional[str] = None
 
     print(_c(_DIM, BANNER))
     print(f"  Surrogate model loaded. {_c(_GREEN, 'Ready.')}")
@@ -790,9 +384,6 @@ def _interactive(surrogate: Surrogate) -> None:
   {_c(_CYAN, 'score')}  {_c(_DIM, '/ s')}      Score text against surrogate (offline)
   {_c(_CYAN, 'verify')} {_c(_DIM, '/ v')}      Score against GPTZero's live API + surrogate
   {_c(_CYAN, 'diagnose')} {_c(_DIM, '/ d')}    Identify detection triggers and how to fix them
-  {_c(_CYAN, 'rewrite')} {_c(_DIM, '/ r')}     Auto-rewrite text to evade detection
-  {_c(_CYAN, 'target')} {_c(_DIM, '/ t')}      Set rewrite target probability  {_c(_DIM, f'(current: {target:.2f})')}
-  {_c(_CYAN, 'iterations')} {_c(_DIM, '/ i')}  Set max rewrite iterations      {_c(_DIM, f'(current: {max_iter})')}
   {_c(_CYAN, 'help')} {_c(_DIM, '/ h')}        Show this message
   {_c(_CYAN, 'quit')} {_c(_DIM, '/ q')}        Exit
 """)
@@ -805,39 +396,6 @@ def _interactive(surrogate: Surrogate) -> None:
 
         elif cmd in ("d", "diagnose", "diag"):
             do_diagnose(surrogate, inline)
-
-        elif cmd in ("r", "rewrite"):
-            result, gptzero_key = do_rewrite(surrogate, inline, target=target, max_iter=max_iter, gptzero_key=gptzero_key)
-            if result:
-                last_rewrite = result
-
-        elif cmd in ("t", "target"):
-            val = inline
-            if not val:
-                try:
-                    val = input(f"  {_c(_CYAN, '>')} Target probability: ").strip()
-                except (EOFError, KeyboardInterrupt):
-                    print()
-                    continue
-            try:
-                target = float(val)
-                print(f"  Target set to {_c(_CYAN, f'{target:.2f}')}")
-            except ValueError:
-                print(f"  {_c(_RED, 'Invalid number.')}")
-
-        elif cmd in ("i", "iterations", "iter"):
-            val = inline
-            if not val:
-                try:
-                    val = input(f"  {_c(_CYAN, '>')} Max iterations: ").strip()
-                except (EOFError, KeyboardInterrupt):
-                    print()
-                    continue
-            try:
-                max_iter = int(val)
-                print(f"  Max iterations set to {_c(_CYAN, str(max_iter))}")
-            except ValueError:
-                print(f"  {_c(_RED, 'Invalid number.')}")
 
         else:
             do_score(surrogate, raw)
@@ -852,13 +410,11 @@ def main() -> None:
         description="GPTZero evasion tool. Interactive by default.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("mode", nargs="?", choices=["score", "diagnose", "rewrite", "verify"],
+    parser.add_argument("mode", nargs="?", choices=["score", "diagnose", "verify"],
                         help="Non-interactive mode (omit for interactive shell)")
     parser.add_argument("text", nargs="?", help="Input text")
     parser.add_argument("--stdin", action="store_true", help="Read text from stdin")
     parser.add_argument("--json", action="store_true", help="JSON output")
-    parser.add_argument("--target", type=float, default=0.30, help="Rewrite target (default: 0.30)")
-    parser.add_argument("--max-iterations", type=int, default=5, help="Max rewrite iterations (default: 5)")
     parser.add_argument("--api-key", help="GPTZero API key (for verify mode)")
     args = parser.parse_args()
 
@@ -893,44 +449,6 @@ def main() -> None:
                                "triggers": [{"feature": t["feature"], "label": t["label"],
                                              "impact": round(t["impact"], 6), "suggestion": t["suggestion"]}
                                             for t in triggers[:10]]}, indent=2))
-        elif mode == "rewrite":
-            current = normalize_text(text)
-            gz, _ = _get_gptzero_client(args.api_key)
-            if gz:
-                cp, _ = _gptzero_prob(gz, current)
-                if cp < 0:
-                    cp = surrogate.prob(current)
-                    gz = None
-            else:
-                cp = surrogate.prob(current)
-            orig_cp = cp
-            for attempt in range(args.max_iterations):
-                if cp <= args.target:
-                    break
-                trigs = _get_triggers(surrogate, current)
-                if not trigs:
-                    break
-                prompt = _build_rewrite_prompt(current, trigs, attempt + 1)
-                candidate = _call_claude(prompt)
-                if not candidate:
-                    break
-                candidate = normalize_text(candidate)
-                if gz:
-                    np_, _ = _gptzero_prob(gz, candidate)
-                    if np_ < 0:
-                        continue
-                else:
-                    np_ = surrogate.prob(candidate)
-                if np_ >= cp:
-                    continue
-                current, cp = candidate, np_
-            print(json.dumps({
-                "passed": cp <= args.target,
-                "original_prob": round(orig_cp, 6),
-                "final_prob": round(cp, 6),
-                "final_class": surrogate.classify(current),
-                "rewritten_text": current,
-            }, indent=2))
         elif mode == "verify":
             do_verify(surrogate, text, api_key=args.api_key)
         return
@@ -940,8 +458,6 @@ def main() -> None:
         do_score(surrogate, text)
     elif mode == "diagnose":
         do_diagnose(surrogate, text)
-    elif mode == "rewrite":
-        do_rewrite(surrogate, text, target=args.target, max_iter=args.max_iterations, gptzero_key=args.api_key)
     elif mode == "verify":
         do_verify(surrogate, text, api_key=args.api_key)
 
