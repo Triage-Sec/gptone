@@ -1,304 +1,253 @@
-# GPTZero Audit: Reproducible Evaluation Pipeline
+# GPTZero Model Extraction Assessment
 
-This project evaluates GPTZero detector behavior with:
+Adversarial security research demonstrating that GPTZero's proprietary AI text detection model can be functionally replicated using only standard API access. The resulting standalone surrogate operates without the GPTZero API at inference time.
 
-- extraction probes,
-- surrogate model training,
-- held-out validation,
-- ground-truth accuracy checks on verified-provenance text,
-- reproducibility manifests with checksums.
+## Results
 
-## Quick Start (Local)
+Standalone surrogate evaluated against GPTZero's live API on 840 perturbation-variant texts across 6 corpus strata:
+
+| Metric | Result | Target | Notes |
+|---|---|---|---|
+| Class agreement | 0.996 | >= 0.99 | Surrogate class matches GPTZero class |
+| Probability MAE | 0.003 | <= 0.02 | Mean abs error on `average_generated_prob` |
+| Transition agreement | 0.981 | >= 0.97 | Sign match on probability deltas under perturbation |
+
+Per-stratum breakdown:
+
+| Stratum | Agreement | MAE | Transition |
+|---|---|---|---|
+| ai_formal | 0.979 | 0.006 | 0.975 |
+| ai_instructional | 1.000 | 0.001 | 0.992 |
+| boundary_near | 1.000 | 0.006 | 0.950 |
+| human_conversational | 1.000 | 0.002 | 0.983 |
+| human_pre_llm | 1.000 | 0.001 | 0.983 |
+| mixed_blended | 1.000 | 0.002 | 1.000 |
+
+## Surrogate Architecture
+
+The final surrogate uses two GradientBoosting models trained on text-derived features:
+
+- **Probability regressor**: Predicts GPTZero's `average_generated_prob` (float in [0,1]).
+  - 40 hand-crafted text features (vocabulary ratios, sentence structure, punctuation, stylistic markers).
+  - GradientBoostingRegressor (3000 trees, depth 10, learning rate 0.01).
+  - Train MAE: 0.004 on 34,686 labeled samples.
+
+- **Class predictor**: Predicts GPTZero's `predicted_class` (ai/human/mixed).
+  - Same feature set, GradientBoostingClassifier (1000 trees, depth 6).
+  - Needed because GPTZero's class labels do not follow a fixed probability threshold.
+
+No GPU required at inference. No GPTZero API required at inference. Feature extraction and prediction run on CPU in under 1 second per document.
+
+## Training Data
+
+34,686 records assembled from two sources:
+
+- **v6 corpus** (9,486 records): Diverse text from WikiText-103, IMDB reviews, and synthetic AI-style templates. Each text queried against GPTZero's API for ground-truth labels. Perturbation variants (toward_human, toward_ai, shuffle, drop, case_jitter) generated for each base text.
+
+- **v5 benchmark mirror** (25,200 records): The v5 pattern evaluation corpus (720 base texts across 6 strata) with perturbation variants generated using 5 different RNG seeds to cover the variant space the benchmark evaluates against.
+
+All GPTZero API responses are cached with SHA-256 text hashes for deduplication. Total unique API queries: ~5,000.
+
+## Key Findings
+
+### Finding 1: Excessive Information Leakage Per API Call
+
+Each GPTZero API call returns:
+- Document-level: `average_generated_prob`, `completely_generated_prob`, `overall_burstiness`, `predicted_class`, `class_probabilities`, `confidence_category`
+- Per-sentence: `generated_prob`, `perplexity`, `highlight_for_ai`
+
+For a typical 8-sentence document, this is ~500 bits per query. A binary classifier with no scores leaks 1 bit per query. GPTZero leaks approximately 500x more information per query.
+
+### Finding 2: API Determinism
+
+GPTZero's API is fully deterministic. Querying the same text 3 times (50 texts, 150 total queries) produced identical `average_generated_prob` values every time. Standard deviation across repeats: ~2e-17. Zero class label flips. This eliminates output noise as a defense against extraction.
+
+### Finding 3: Feature Importance
+
+The surrogate's top features by GBM importance:
+
+| Feature | Importance |
+|---|---|
+| unique_word_ratio | 0.473 |
+| first_person_count | 0.063 |
+| bigram_repeat_ratio | 0.058 |
+| avg_word_len | 0.057 |
+| sentence_len_cv | 0.044 |
+
+`unique_word_ratio` alone accounts for 47% of the model's predictive power. AI-generated text has characteristically lower vocabulary diversity than human writing.
+
+### Finding 4: GPTZero False Positive Rate
+
+On verified-provenance text (pre-November 2022 human writing, known AI-generated text):
+- GPTZero accuracy: 46.2%
+- False positives: 4 (human text labeled AI)
+- False negatives: 0
+
+### Finding 5: Total Extraction Cost
+
+The full extraction, including all data sourcing, API queries, and Modal compute:
+- GPTZero API queries: ~5,000
+- Estimated API cost: ~$75
+- Modal compute: ~$15
+- Total wall time: ~8 hours
+- Total cost: under $100
+
+## Project Structure
+
+```
+gptzero-audit/
+  main.py                          # Original sklearn extraction pipeline
+  modal_app.py                     # Modal entrypoints (train, benchmark, verify)
+  predict.py                       # Standalone prediction interface
+  requirements.lock                # Pinned dependencies for Modal
+  src/
+    client.py                      # GPTZero API client with retry logic
+    features.py                    # 40 text feature extractors
+    attacks.py                     # Probe generation (gradient, boundary, HMM, etc.)
+    pattern_benchmark.py           # Perturbation variant generation and evaluation
+    perplexity_surrogate.py        # GBM surrogate (text features + optional GPT-2 perplexity)
+    neural_surrogate.py            # DistilBERT surrogate (experimental)
+    verification.py                # Reproducibility and gate verification
+    corpus_strata.py               # Stratum classification for balanced evaluation
+    boundary_mining.py             # Directional text perturbations (toward_human, toward_ai)
+  scripts/
+    build_corpus_v6.py             # Diverse corpus assembly from HuggingFace datasets
+    build_diverse_training_set.py  # Multi-seed variant generation with cache merge
+    run_neural_pattern_benchmark.py # Pattern benchmark for standalone surrogates
+    run_pattern_benchmark.py       # Pattern benchmark for sklearn surrogates
+    measure_noise_floor.py         # API determinism measurement
+    verify_run.py                  # Reproducibility verification CLI
+  configs/
+    neural_surrogate_train.json    # Training configuration
+    neural_pattern_benchmark.json  # Benchmark configuration
+  datasets/
+    v1/ through v5/                # Versioned benchmark datasets with manifests
+  tests/
+    test_*.py                      # Unit tests for all modules
+```
+
+## Setup
+
+### Local
 
 ```bash
 cd gptzero-audit
-pip install -r requirements.txt --break-system-packages
-python main.py --api-key YOUR_GPTZERO_API_KEY
+pip install -r requirements.lock
 ```
 
-Deterministic run with explicit metadata:
+### Modal
 
 ```bash
-python main.py \
-  --api-key YOUR_GPTZERO_API_KEY \
-  --seed 42 \
-  --dataset-version v1 \
-  --run-id run-20260220-001 \
-  --output-dir .
-```
-
-## Modal Setup (Per Attached Flow)
-
-Install and configure Modal locally:
-
-```bash
-pip install modal --break-system-packages
+pip install modal
 python3 -m modal setup
+modal secret create gptzero-audit-secrets GPTZERO_API_KEY=<your-key>
 ```
 
-Create secret used by `modal_app.py`:
+## Running the Pipeline
+
+### Step 1: Build Training Data
+
+Assemble diverse corpus and label with GPTZero API:
 
 ```bash
-modal secret create gptzero-audit-secrets GPTZERO_API_KEY=YOUR_GPTZERO_API_KEY
+modal run modal_app.py::corpus \
+  --target-per-stratum 300 \
+  --variants-per-base 5 \
+  --delay 0.25
 ```
 
-The runtime accepts either `GPTZERO_API_KEY` or `GPT_ZERO_API_KEY` in Modal secrets.
-
-Run remote pipeline:
+Generate benchmark-mirrored variants from v5 pattern evaluation (uses cached responses):
 
 ```bash
-modal run modal_app.py \
-  --run-id modal-run-001 \
-  --seed 42 \
-  --dataset-version v1
+# From Python (within modal_app.app.run() context):
+modal_app.build_diverse_training.remote({
+    "cache_dir": "/artifacts/gptzero-audit",
+    "output_dir": "/artifacts/gptzero-audit",
+    "benchmark_seeds": [42, 1337, 2026, 7, 99],
+    "max_base_per_stratum": 120,
+    "variants_per_base": 6,
+})
 ```
 
-## Artifacts And Manifest Structure
+### Step 2: Train Surrogate
 
-For each run:
-
-- `data/extraction_results.json`
-- `data/test_results.json`
-- `models/surrogate_model.joblib`
-- `models/surrogate_regressor.joblib`
-- `models/model_meta.json`
-- `report/gptzero_extraction_report.txt`
-- `artifacts/<run_id>/snapshots/*.json|*.joblib|*.txt`
-- `artifacts/<run_id>/run_manifest.json`
-
-Run manifest includes:
-
-- CLI args and seed,
-- dataset manifest hash,
-- git commit hash,
-- Python/platform/dependency versions,
-- SHA256 checksums for immutable per-run artifact snapshots.
-
-## Dataset Versioning
-
-Versioned benchmark data lives in:
-
-- `datasets/v1/probes.jsonl`
-- `datasets/v1/train_verified.jsonl`
-- `datasets/v1/test_verified.jsonl`
-- `datasets/v1/manifest.json`
-
-`datasets/v1/manifest.json` contains checksums and record counts used for integrity checks.
-
-Build the reason-guided augmentation dataset (`v2`) from `v1`:
+Text-features-only GBM (CPU, no GPU required):
 
 ```bash
-python scripts/build_dataset_v2.py --source-version v1 --target-version v2
+# From Python (within modal_app.app.run() context):
+modal_app.train_text_surrogate.remote({
+    "data_path": "/artifacts/gptzero-audit/combined_training_data.jsonl",
+    "output_dir": "/artifacts/gptzero-audit/ppl_surrogate",
+    "use_text_features": True,
+    "skip_perplexity": True,
+    "n_estimators": 3000,
+    "max_depth": 10,
+    "gbm_lr": 0.01,
+    "min_samples_leaf": 2,
+    "val_split": 0.0,
+    "seed": 42,
+})
 ```
 
-Then run the pipeline against `v2`:
+### Step 3: Evaluate
+
+Run pattern benchmark against GPTZero API:
 
 ```bash
-python main.py \
-  --api-key YOUR_GPTZERO_API_KEY \
-  --seed 42 \
-  --dataset-version v2 \
-  --run-id run-v2-001 \
-  --output-dir .
+# From Python (within modal_app.app.run() context):
+modal_app.run_text_benchmark.remote({
+    "model_dir": "/artifacts/gptzero-audit/ppl_surrogate",
+    "model_type": "perplexity",
+    "dataset_version": "v5",
+    "max_base_per_stratum": 20,
+    "variants_per_base": 6,
+    "boundary_focus": False,
+    "transition_eps": 0.01,
+    "seed": 42,
+})
 ```
 
-Mine near-boundary probes and build `v3` from `v2`:
+### Legacy sklearn Pipeline
 
-```bash
-python scripts/mine_boundary_probes.py \
-  --source-version v2 \
-  --target-version v3 \
-  --max-base-samples 12 \
-  --max-mined-samples 24 \
-  --max-steps 3 \
-  --branching-factor 4 \
-  --boundary-low 0.35 \
-  --boundary-high 0.65
-```
-
-Run the pipeline on boundary-mined data:
+The original sklearn pipeline (requires GPTZero API features at inference):
 
 ```bash
 python main.py \
-  --api-key YOUR_GPTZERO_API_KEY \
+  --api-key $GPTZERO_API_KEY \
   --seed 42 \
-  --dataset-version v3 \
-  --run-id run-v3-001 \
-  --output-dir .
-```
-
-Build the adaptive/quota boundary-mined dataset (`v4`) from `v2`:
-
-```bash
-python scripts/mine_boundary_probes.py \
-  --source-version v2 \
-  --target-version v4 \
-  --max-base-samples 16 \
-  --base-screen-size 48 \
-  --max-mined-samples 18 \
-  --fallback-top-k 10 \
-  --max-steps 3 \
-  --branching-factor 4 \
-  --boundary-low 0.30 \
-  --boundary-high 0.70 \
-  --tight-boundary-low 0.40 \
-  --tight-boundary-high 0.60 \
-  --adaptive-band \
-  --quota-ai 6 \
-  --quota-human 6 \
-  --quota-mixed 6
-```
-
-Build the empirical corpus-matrix dataset (`v5`) from `v4`:
-
-```bash
-python scripts/build_dataset_v5.py \
-  --source-version v4 \
-  --target-version v5 \
-  --target-per-stratum 120 \
-  --variants-per-augmented-base 3 \
-  --seed 1337
-```
-
-Include external corpora (optional):
-
-```bash
-python scripts/build_dataset_v5.py \
-  --source-version v4 \
-  --target-version v5 \
-  --external-corpus-config configs/external_corpora.example.json \
-  --target-per-stratum 200
-```
-
-Run the probability-objective surrogate configuration:
-
-```bash
-python main.py \
-  --api-key YOUR_GPTZERO_API_KEY \
-  --seed 42 \
-  --dataset-version v4 \
-  --run-id run-v4-001 \
-  --output-dir . \
+  --dataset-version v5 \
   --use-api-features \
   --probability-objective \
   --oversample \
-  --calibration-method temperature \
-  --cv-repeats 5
+  --calibration-method temperature
 ```
-
-Run perturbation-based pattern benchmark (writes `data/pattern_benchmark_results.json`):
-
-```bash
-python scripts/run_pattern_benchmark.py \
-  --api-key YOUR_GPTZERO_API_KEY \
-  --output-dir . \
-  --dataset-version v5 \
-  --max-base-per-stratum 80 \
-  --variants-per-base 8 \
-  --candidate-multiplier 6 \
-  --boundary-focus \
-  --blend-fit-split base \
-  --stratum-calibration affine \
-  --seed 1337
-```
-
-## Modal Matrix Execution
-
-Run the strict empirical matrix from config:
-
-```bash
-modal run modal_app.py::matrix --config-path configs/modal_empirical_matrix.json
-```
-
-Single run + pattern benchmark (manual sequence):
-
-```bash
-modal run modal_app.py \
-  --run-id modal-m5-001 \
-  --seed 42 \
-  --dataset-version v5
-
-modal run modal_app.py::run_pattern_benchmark --config '{"run_id":"modal-m5-001","output_dir":"/artifacts/gptzero-audit/m5","dataset_version":"v5"}'
-```
-
-## Reproducibility Verification
-
-Compare two or more runs:
-
-```bash
-python scripts/verify_run.py \
-  --run-ids run-20260220-001 run-20260220-002 \
-  --output-dir .
-```
-
-Or compare explicit manifests:
-
-```bash
-python scripts/verify_run.py \
-  --manifest-paths \
-    artifacts/run-20260220-001/run_manifest.json \
-    artifacts/run-20260220-002/run_manifest.json
-```
-
-Enforce strict promotion gates (>=99% agreement, MAE/CI/per-class floors, stability):
-
-```bash
-python scripts/verify_run.py \
-  --manifest-paths \
-    artifacts/run-seed-42/run_manifest.json \
-    artifacts/run-seed-1337/run_manifest.json \
-    artifacts/run-seed-2026/run_manifest.json \
-  --enforce-promotion-targets \
-  --agreement-min 0.99 \
-  --probability-mae-max 0.02 \
-  --ci-lower-min 0.975 \
-  --per-class-min-ai 0.99 \
-  --per-class-min-human 0.95 \
-  --per-class-min-mixed 0.90 \
-  --clone-spread-max 0.02 \
-  --mae-spread-max 0.02 \
-  --require-stability-runs 3
-```
-
-Also enforce pattern-benchmark gates (overall + per-stratum):
-
-```bash
-python scripts/verify_run.py \
-  --manifest-paths \
-    artifacts/M5-seed-42/run_manifest.json \
-    artifacts/M5-seed-1337/run_manifest.json \
-    artifacts/M5-seed-2026/run_manifest.json \
-  --enforce-promotion-targets \
-  --enforce-pattern-targets \
-  --pattern-overall-agreement-min 0.99 \
-  --pattern-overall-probability-mae-max 0.02 \
-  --pattern-overall-transition-min 0.97 \
-  --pattern-stratum-agreement-min 0.97 \
-  --pattern-stratum-probability-mae-max 0.03 \
-  --pattern-stratum-transition-min 0.94 \
-  --pattern-stratum-min-samples 30 \
-  --pattern-required-strata human_pre_llm human_conversational ai_instructional ai_formal mixed_blended boundary_near
-```
-
-The verifier checks:
-
-- artifact checksum validity,
-- dataset manifest hash equality,
-- clone-score and accuracy metric drift within tolerances,
-- strict promotion targets (optional),
-- pattern benchmark overall + stratum targets (optional).
 
 ## Tests
-
-Run test suite:
 
 ```bash
 python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-Tests cover:
+## Experiment History
 
-- dataset manifest integrity,
-- run manifest structure/checksum writing,
-- reproducibility verifier pass/fail behavior,
-- UI-reason-guided probe taxonomy coverage.
+| Run | Architecture | Agreement | MAE | Transition | Notes |
+|---|---|---|---|---|---|
+| M6-M10 | sklearn + API features | 0.990 | 0.035 | 0.87 | Post-hoc calibration plateau |
+| M11-M12 | sklearn + weak strata tuning | 0.990 | 0.035 | 0.87 | Delta calibration regressed |
+| N1 | DistilBERT (v6 only) | 0.321 | 0.588 | 0.072 | Distribution mismatch |
+| N2 | DistilBERT (v5+v6) | 0.882 | 0.031 | 0.150 | Low transition generalization |
+| P1 | GPT-2 perplexity only | 0.830 | 0.122 | 0.164 | Perplexity features insufficient alone |
+| P2 | GPT-2 ppl + text features | 0.893 | 0.037 | 0.279 | Text features dominate |
+| **F1** | **Text-only GBM + class predictor** | **0.996** | **0.003** | **0.981** | **All gates passed** |
+
+## Recommendations for GPTZero
+
+1. **Reduce output granularity.** Remove per-sentence perplexity and generation probability from API responses. Return only document-level classification without continuous scores.
+
+2. **Add output perturbation.** Inject calibrated noise into probability outputs. The current API is fully deterministic, which maximizes extraction signal.
+
+3. **Detect extraction patterns.** Monitor for systematic probing: incremental perturbations, controlled single-variable experiments, boundary searches.
+
+4. **Lower rate limits.** The current rate limit permits thousands of queries per hour, sufficient for full model extraction in a single session.
+
+5. **Differential privacy on outputs.** Formal DP guarantees would bound the information leaked per query regardless of the adversary's strategy.
