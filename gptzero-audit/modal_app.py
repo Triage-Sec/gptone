@@ -663,6 +663,19 @@ def run_text_benchmark(config: Dict[str, object]) -> Dict[str, object]:
 @app.function(
     image=corpus_image,
     volumes={"/artifacts": artifacts_volume},
+    timeout=5 * 60,
+)
+def download_model(model_dir: str = "/artifacts/gptzero-audit/ppl_surrogate") -> bytes:
+    """Read the trained surrogate pickle from the Modal volume and return raw bytes."""
+    model_path = Path(model_dir) / "ppl_surrogate.pkl"
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model not found at {model_path}")
+    return model_path.read_bytes()
+
+
+@app.function(
+    image=corpus_image,
+    volumes={"/artifacts": artifacts_volume},
     timeout=60 * 60,
 )
 def train_text_surrogate(config: Dict[str, object]) -> Dict[str, object]:
