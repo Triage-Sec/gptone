@@ -2,13 +2,13 @@
 """GPTZero evasion tool.
 
 Interactive CLI that uses the extracted surrogate model to score, diagnose,
-and rewrite text to evade GPTZero's AI detection. Fully offline after
-initial model download.
+verify against the live API, and rewrite text to evade GPTZero's AI detection.
 """
 
 from __future__ import annotations
 
 import difflib
+import getpass
 import json
 import os
 import pickle
@@ -18,7 +18,7 @@ import readline
 import sys
 import textwrap
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -36,7 +36,6 @@ from src.features import (
 from src.boundary_mining import (
     contractionize,
     casualize,
-    humanize_variants,
     normalize_text,
     split_sentences,
     join_sentences,
@@ -49,14 +48,11 @@ MODEL_PATH = MODEL_DIR / "ppl_surrogate.pkl"
 
 _BOLD = "\033[1m"
 _DIM = "\033[2m"
-_ITALIC = "\033[3m"
 _RED = "\033[91m"
 _GREEN = "\033[92m"
 _YELLOW = "\033[93m"
 _CYAN = "\033[96m"
-_WHITE = "\033[97m"
 _RESET = "\033[0m"
-_CLEAR_LINE = "\033[2K\r"
 
 _USE_COLOR = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
@@ -67,12 +63,7 @@ def _c(code: str, text: str) -> str:
 
 def _bar(prob: float, width: int = 30) -> str:
     filled = int(prob * width)
-    if prob >= 0.65:
-        color = _RED
-    elif prob >= 0.35:
-        color = _YELLOW
-    else:
-        color = _GREEN
+    color = _RED if prob >= 0.65 else (_YELLOW if prob >= 0.35 else _GREEN)
     return _c(color, "\u2588" * filled) + _c(_DIM, "\u2591" * (width - filled))
 
 
@@ -86,10 +77,6 @@ def _verdict(cls: str) -> str:
 
 def _hr(char: str = "\u2500", width: int = 64) -> str:
     return _c(_DIM, char * width)
-
-
-def _prompt(msg: str) -> str:
-    return input(f"  {_c(_CYAN, '>')} {msg}")
 
 
 BANNER = r"""
@@ -132,17 +119,13 @@ class Surrogate:
         return extract_features(text)
 
 
-# -- model download ----------------------------------------------------------
-
 def _ensure_model() -> Surrogate:
     if MODEL_PATH.exists():
         return Surrogate(MODEL_PATH)
-
     print()
     print(f"  {_c(_YELLOW, 'Model not found locally.')}")
     print(f"  Downloading trained surrogate from Modal...")
     print()
-
     try:
         import modal_app
         with modal_app.app.run():
@@ -150,41 +133,40 @@ def _ensure_model() -> Surrogate:
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
         MODEL_PATH.write_bytes(data)
         mb = len(data) / (1024 * 1024)
-        print(f"  {_c(_GREEN, 'Downloaded')} {mb:.1f} MB to {MODEL_PATH}")
+        print(f"  {_c(_GREEN, 'Downloaded')} {mb:.1f} MB")
         print()
         return Surrogate(MODEL_PATH)
     except ImportError:
         print(f"  {_c(_RED, 'Error:')} modal package not installed.")
-        print(f"  Install with: pip install modal && python3 -m modal setup")
+        print(f"  Run: pip install modal && python3 -m modal setup")
         sys.exit(1)
     except Exception as e:
-        print(f"  {_c(_RED, 'Error downloading model:')} {e}")
-        print(f"  Make sure Modal is configured: python3 -m modal setup")
+        print(f"  {_c(_RED, 'Download failed:')} {e}")
         sys.exit(1)
 
 
 # -- feature analysis --------------------------------------------------------
 
 _GUIDANCE: Dict[str, Tuple[str, str, str]] = {
-    "unique_word_ratio":           ("low",  "Vocabulary diversity",    "Use more varied word choices. Avoid reusing the same terms."),
-    "contraction_count":           ("low",  "Contractions",           "Add contractions: don't, can't, it's, won't, I've, etc."),
-    "hedging_score":               ("high", "Hedging phrases",        "Remove phrases like 'it is important to note', 'furthermore'."),
-    "transition_word_score":       ("high", "Mechanical transitions", "Replace 'moreover', 'consequently', 'therefore' with casual connectors."),
-    "first_person_count":          ("low",  "First-person voice",     "Write in first person: 'I think', 'in my experience', 'we found'."),
+    "unique_word_ratio":           ("low",  "Vocabulary diversity",    "Use more varied word choices."),
+    "contraction_count":           ("low",  "Contractions",           "Add contractions: don't, can't, it's, etc."),
+    "hedging_score":               ("high", "Hedging phrases",        "Remove 'it is important to note', 'furthermore', etc."),
+    "transition_word_score":       ("high", "Mechanical transitions", "Remove 'moreover', 'consequently', 'therefore'."),
+    "first_person_count":          ("low",  "First-person voice",     "Write in first person where natural."),
     "passive_voice_ratio":         ("high", "Passive voice",          "Rewrite passive constructions in active voice."),
-    "bigram_repeat_ratio":         ("high", "Bigram repetition",      "Vary phrasing. Don't repeat two-word patterns."),
+    "bigram_repeat_ratio":         ("high", "Bigram repetition",      "Vary phrasing at the two-word level."),
     "trigram_repeat_ratio":        ("high", "Trigram repetition",     "Rephrase repeated three-word constructions."),
-    "adjacent_sentence_similarity":("high", "Sentence similarity",    "Make consecutive sentences more distinct in topic and vocabulary."),
-    "sentence_len_cv":             ("low",  "Sentence length variety", "Mix short punchy sentences with longer ones."),
-    "question_mark_count":         ("low",  "Questions",              "Add a rhetorical or genuine question."),
-    "exclamation_count":           ("low",  "Exclamations",           "Add natural emphasis where appropriate."),
-    "starts_with_the_ratio":       ("high", "'The' sentence starts",  "Vary sentence openers. Not every sentence should start with 'The'."),
-    "starts_with_transition_ratio":("high", "Transition openers",     "Don't open sentences with 'Furthermore', 'Moreover', etc."),
+    "adjacent_sentence_similarity":("high", "Sentence similarity",    "Make consecutive sentences more distinct."),
+    "sentence_len_cv":             ("low",  "Sentence length variety", "Mix short and long sentences."),
+    "question_mark_count":         ("low",  "Questions",              "Add a question where natural."),
+    "exclamation_count":           ("low",  "Exclamations",           "Add emphasis where appropriate."),
+    "starts_with_the_ratio":       ("high", "'The' sentence starts",  "Vary sentence openers."),
+    "starts_with_transition_ratio":("high", "Transition openers",     "Don't start sentences with formal transitions."),
     "repeated_sentence_starts":    ("high", "Repetitive openers",     "Use different first words for each sentence."),
-    "avg_word_len":                ("high", "Word length",            "Use simpler, shorter words where possible."),
-    "pronoun_density":             ("low",  "Pronoun usage",          "Add personal pronouns: he, she, they, I, we."),
-    "windowed_ttr":                ("low",  "Type-token ratio",       "Vocabulary is too narrow. Introduce synonym variety."),
-    "determiner_density":          ("high", "Determiner density",     "Reduce overuse of 'the', 'a', 'this'. Typical of formulaic writing."),
+    "avg_word_len":                ("high", "Word length",            "Use simpler, shorter words."),
+    "pronoun_density":             ("low",  "Pronoun usage",          "Add personal pronouns."),
+    "windowed_ttr":                ("low",  "Type-token ratio",       "Vocabulary is too narrow."),
+    "determiner_density":          ("high", "Determiner density",     "Reduce overuse of 'the', 'a', 'this'."),
 }
 
 _BASELINES: Dict[str, float] = {
@@ -207,34 +189,46 @@ def _gap(name: str, value: float) -> float:
     return max(0.0, value - baseline) if direction == "high" else max(0.0, baseline - value)
 
 
-# -- mutations ---------------------------------------------------------------
+def _get_triggers(surrogate: Surrogate, text: str) -> List[Dict[str, Any]]:
+    vec, _ = surrogate.features(text)
+    imps = surrogate.importances()
+    triggers: List[Dict[str, Any]] = []
+    for i, name in enumerate(FEATURE_NAMES):
+        if name not in _GUIDANCE:
+            continue
+        g = _gap(name, vec[i])
+        imp = imps.get(name, 0.0)
+        score = g * imp
+        if score > 0.0001:
+            direction, label, suggestion = _GUIDANCE[name]
+            triggers.append({"feature": name, "label": label, "value": vec[i],
+                             "baseline": _BASELINES.get(name, 0.0),
+                             "impact": score, "suggestion": suggestion})
+    triggers.sort(key=lambda t: -t["impact"])
+    return triggers
+
+
+# -- feature-targeted mutations ----------------------------------------------
 
 _HEDGING_RE = [re.compile(re.escape(p), re.IGNORECASE) for p in HEDGING_PHRASES]
 _TRANSITION_RE = re.compile(
     r"\b(" + "|".join(re.escape(w) for w in TRANSITION_WORDS) + r")\b,?\s*",
     re.IGNORECASE,
 )
-_FP_INSERTS = [
-    "I think ", "In my experience, ", "From what I've seen, ",
-    "Honestly, ", "I'd say ", "What I noticed is ",
-    "I believe ", "The way I see it, ",
-]
-_QUESTIONS = [
-    "But does that actually hold up?", "Is that really the case though?",
-    "What does this mean in practice?", "Why does that matter?",
-    "Sound familiar?", "Makes you think, right?",
-    "But here's the thing -- does it work?",
-]
+
+# Maps a trigger feature name to a mutation function.
+# Each function takes (text) -> text. Applied at most once.
+
+def _mut_contractions(text: str) -> str:
+    return contractionize(text)
 
 
-def _m_contractionize(t: str, r: random.Random) -> str:
-    return contractionize(t)
+def _mut_casualize(text: str) -> str:
+    return casualize(text)
 
-def _m_casualize(t: str, r: random.Random) -> str:
-    return casualize(t)
 
-def _m_strip_hedging(t: str, r: random.Random) -> str:
-    sents = split_sentences(t)
+def _mut_strip_hedging(text: str) -> str:
+    sents = split_sentences(text)
     out = []
     for s in sents:
         x = s
@@ -246,10 +240,11 @@ def _m_strip_hedging(t: str, r: random.Random) -> str:
             x = x[0].upper() + x[1:]
         if x:
             out.append(x)
-    return join_sentences(out) if out else t
+    return join_sentences(out) if out else text
 
-def _m_strip_transitions(t: str, r: random.Random) -> str:
-    sents = split_sentences(t)
+
+def _mut_strip_transitions(text: str) -> str:
+    sents = split_sentences(text)
     out = []
     for s in sents:
         x = _TRANSITION_RE.sub("", s, count=1).strip()
@@ -259,48 +254,99 @@ def _m_strip_transitions(t: str, r: random.Random) -> str:
         out.append(x if x else s)
     return join_sentences(out)
 
-def _m_first_person(t: str, r: random.Random) -> str:
-    sents = split_sentences(t)
-    if not sents:
-        return t
-    i = r.randrange(len(sents))
-    s = sents[i]
-    sents[i] = r.choice(_FP_INSERTS) + (s[0].lower() + s[1:] if len(s) > 1 else s)
-    return join_sentences(sents)
 
-def _m_vary_lengths(t: str, r: random.Random) -> str:
-    sents = split_sentences(t)
-    if len(sents) < 3:
-        return t
+def _mut_shorten_words(text: str) -> str:
+    """Replace long formal words with shorter casual equivalents (case-preserving)."""
+    from src.boundary_mining import _FORMAL_TO_CASUAL, _sub_wordwise
+    out = text
+    for pattern, replacement in _FORMAL_TO_CASUAL:
+        out = _sub_wordwise(out, pattern, replacement)
+    return normalize_text(out)
+
+
+def _mut_split_longest(text: str) -> str:
+    """Split the longest sentence at a natural comma or conjunction."""
+    sents = split_sentences(text)
+    if len(sents) < 2:
+        return text
     li = max(range(len(sents)), key=lambda i: len(sents[i].split()))
-    words = sents[li].split()
-    if len(words) > 12:
-        mid = len(words) // 2
-        p1 = " ".join(words[:mid]).rstrip(".,;:") + "."
-        p2 = " ".join(words[mid:])
-        if p2 and p2[0].islower():
-            p2 = p2[0].upper() + p2[1:]
-        sents[li] = p1
-        sents.insert(li + 1, p2)
+    s = sents[li]
+    words = s.split()
+    if len(words) < 10:
+        return text
+    split_points = []
+    for i, w in enumerate(words):
+        wl = w.lower().rstrip(".,;:")
+        if wl in ("and", "but", "which", "where", "while", "although", "because") and i > 3:
+            split_points.append(i)
+    if not split_points:
+        for i, w in enumerate(words):
+            if w.endswith(",") and i > 3 and i < len(words) - 3:
+                split_points.append(i + 1)
+    if not split_points:
+        return text
+    sp = split_points[len(split_points) // 2]
+    p1 = " ".join(words[:sp]).rstrip(".,;:") + "."
+    p2 = " ".join(words[sp:]).lstrip(",;: ")
+    if p2 and p2[0].islower():
+        p2 = p2[0].upper() + p2[1:]
+    sents[li] = p1
+    sents.insert(li + 1, p2)
     return join_sentences(sents)
 
-def _m_question(t: str, r: random.Random) -> str:
-    sents = split_sentences(t)
-    if not sents:
-        return t
-    i = r.randint(1, max(1, len(sents) - 1))
-    sents.insert(i, r.choice(_QUESTIONS))
+
+def _mut_vary_starts(text: str) -> str:
+    """Reorder sentences that share the same opening word."""
+    sents = split_sentences(text)
+    if len(sents) < 3:
+        return text
+    starts = [s.split()[0].lower() if s.split() else "" for s in sents]
+    changed = False
+    for i in range(len(sents) - 1):
+        if starts[i] == starts[i + 1] and starts[i]:
+            for j in range(i + 2, len(sents)):
+                if starts[j] != starts[i]:
+                    sents[i + 1], sents[j] = sents[j], sents[i + 1]
+                    starts[i + 1], starts[j] = starts[j], starts[i + 1]
+                    changed = True
+                    break
+    return join_sentences(sents) if changed else text
+
+
+def _mut_swap_distant(text: str) -> str:
+    """Swap two non-adjacent sentences to reduce local similarity."""
+    sents = split_sentences(text)
+    if len(sents) < 4:
+        return text
+    i, j = 1, len(sents) - 2
+    if i >= j:
+        return text
+    sents[i], sents[j] = sents[j], sents[i]
     return join_sentences(sents)
 
-_MUTATIONS: List[Tuple[str, Any]] = [
-    ("Add contractions",        _m_contractionize),
-    ("Casualize vocabulary",    _m_casualize),
-    ("Remove hedging phrases",  _m_strip_hedging),
-    ("Remove transitions",      _m_strip_transitions),
-    ("Inject first-person",     _m_first_person),
-    ("Vary sentence lengths",   _m_vary_lengths),
-    ("Add rhetorical question", _m_question),
-]
+
+# Feature -> mutation mapping. Order = priority when features tie.
+_FEATURE_MUTATIONS: Dict[str, List[Tuple[str, Any]]] = {
+    "contraction_count":            [("Add contractions",        _mut_contractions)],
+    "avg_word_len":                 [("Shorten words",           _mut_shorten_words),
+                                     ("Casualize vocabulary",    _mut_casualize)],
+    "hedging_score":                [("Strip hedging phrases",   _mut_strip_hedging)],
+    "transition_word_score":        [("Strip transition words",  _mut_strip_transitions)],
+    "starts_with_transition_ratio": [("Strip transition openers",_mut_strip_transitions)],
+    "sentence_len_cv":              [("Split longest sentence",  _mut_split_longest)],
+    "starts_with_the_ratio":        [("Vary sentence starts",    _mut_vary_starts)],
+    "repeated_sentence_starts":     [("Diversify openers",       _mut_vary_starts)],
+    "adjacent_sentence_similarity": [("Reorder sentences",       _mut_swap_distant)],
+    "unique_word_ratio":            [("Casualize vocabulary",    _mut_casualize)],
+    "windowed_ttr":                 [("Shorten words",           _mut_shorten_words)],
+    "passive_voice_ratio":          [("Casualize vocabulary",    _mut_casualize),
+                                     ("Add contractions",        _mut_contractions)],
+    "bigram_repeat_ratio":          [("Reorder sentences",       _mut_swap_distant),
+                                     ("Vary sentence starts",    _mut_vary_starts)],
+    "trigram_repeat_ratio":         [("Reorder sentences",       _mut_swap_distant)],
+    "determiner_density":           [("Casualize vocabulary",    _mut_casualize)],
+    "pronoun_density":              [("Add contractions",        _mut_contractions)],
+}
 
 
 # -- commands ----------------------------------------------------------------
@@ -331,12 +377,13 @@ def do_score(surrogate: Surrogate, text: Optional[str] = None) -> None:
     cls = surrogate.classify(text)
     wc = len(text.split())
     print()
-    print(f"  {_c(_BOLD, 'GPTZero Prediction')}  {_c(_DIM, '(surrogate)')}")
+    print(f"  {_c(_BOLD, 'GPTZero Prediction')}  {_c(_DIM, '(surrogate, offline)')}")
     print(f"  {_hr()}")
     print(f"  AI Probability   {prob:.4f}  {_bar(prob)}")
     print(f"  Class            {cls}")
     print(f"  Words            {wc}")
     print(f"  Verdict          {_verdict(cls)}")
+    print(f"  {_c(_DIM, 'Use verify to check against GPTZero live API.')}")
     print()
 
 
@@ -347,21 +394,7 @@ def do_diagnose(surrogate: Surrogate, text: Optional[str] = None) -> None:
         return
     prob = surrogate.prob(text)
     cls = surrogate.classify(text)
-    vec, _ = surrogate.features(text)
-    imps = surrogate.importances()
-
-    triggers: List[Dict[str, Any]] = []
-    for i, name in enumerate(FEATURE_NAMES):
-        if name not in _GUIDANCE:
-            continue
-        g = _gap(name, vec[i])
-        imp = imps.get(name, 0.0)
-        score = g * imp
-        if score > 0.0001:
-            direction, label, suggestion = _GUIDANCE[name]
-            triggers.append({"label": label, "value": vec[i], "baseline": _BASELINES.get(name, 0.0),
-                             "impact": score, "suggestion": suggestion})
-    triggers.sort(key=lambda t: -t["impact"])
+    triggers = _get_triggers(surrogate, text)
 
     sentences = split_sentences(text)
     sent_scores = []
@@ -397,17 +430,78 @@ def do_diagnose(surrogate: Surrogate, text: Optional[str] = None) -> None:
         print()
 
 
-def do_rewrite(surrogate: Surrogate, text: Optional[str] = None, target: float = 0.30, max_iter: int = 20) -> None:
+def do_verify(surrogate: Surrogate, text: Optional[str] = None, api_key: Optional[str] = None) -> Optional[str]:
+    """Query GPTZero's live API and show result alongside surrogate prediction."""
     if not text:
         text = _read_text()
     if not text:
-        return
+        return api_key
 
-    rng = random.Random(42)
+    if not api_key:
+        api_key = os.environ.get("GPTZERO_API_KEY") or os.environ.get("GPT_ZERO_API_KEY")
+    if not api_key:
+        try:
+            api_key = getpass.getpass(f"  {_c(_CYAN, 'GPTZero API key:')} ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return api_key
+    if not api_key:
+        print(f"  {_c(_RED, 'No API key provided.')}")
+        return api_key
+
+    from src.client import GPTZeroClient
+    client = GPTZeroClient(api_key=api_key)
+
+    s_prob = surrogate.prob(text)
+    s_cls = surrogate.classify(text)
+
+    print(f"\n  {_c(_DIM, 'Querying GPTZero API...')}")
+    resp = client.predict(text, delay=0)
+
+    if "error" in resp:
+        print(f"  {_c(_RED, 'API error:')} {resp['error']}")
+        return api_key
+
+    gz_prob = resp.get("average_generated_prob", 0.0)
+    gz_cls = resp.get("predicted_class", "unknown")
+
+    print()
+    print(f"  {_c(_BOLD, 'Surrogate')} {_c(_DIM, '(offline)')}")
+    print(f"  {_hr()}")
+    print(f"  AI Probability   {s_prob:.4f}  {_bar(s_prob)}")
+    print(f"  Class            {s_cls:8s}  {_verdict(s_cls)}")
+    print()
+    print(f"  {_c(_BOLD, 'GPTZero')} {_c(_DIM, '(live API)')}")
+    print(f"  {_hr()}")
+    print(f"  AI Probability   {gz_prob:.4f}  {_bar(gz_prob)}")
+    print(f"  Class            {gz_cls:8s}  {_verdict(gz_cls)}")
+    print()
+
+    match = s_cls == gz_cls
+    delta = abs(s_prob - gz_prob)
+    if match and delta < 0.1:
+        print(f"  {_c(_GREEN, 'Agreement:')} Both say {gz_cls}, prob delta {delta:.4f}")
+    elif match:
+        print(f"  {_c(_YELLOW, 'Partial agreement:')} Same class ({gz_cls}), prob delta {delta:.4f}")
+    else:
+        print(f"  {_c(_RED, 'Disagreement:')} Surrogate={s_cls}, GPTZero={gz_cls}, prob delta {delta:.4f}")
+    print()
+    return api_key
+
+
+def do_rewrite(surrogate: Surrogate, text: Optional[str] = None,
+               target: float = 0.30, max_iter: int = 20) -> Optional[str]:
+    """Feature-driven rewrite. Each mutation is targeted at the top trigger and applied at most once."""
+    if not text:
+        text = _read_text()
+    if not text:
+        return None
+
     original = normalize_text(text)
     current = original
     current_prob = surrogate.prob(current)
     orig_prob = current_prob
+    failed_pairs: Set[Tuple[str, int]] = set()
 
     print()
     print(f"  {_c(_BOLD, 'Rewrite')}  Target: < {target:.2f}  |  Max iterations: {max_iter}")
@@ -419,29 +513,44 @@ def do_rewrite(surrogate: Surrogate, text: Optional[str] = None, target: float =
         if current_prob <= target:
             break
 
-        best, bp, bn = current, current_prob, "none"
-        for name, fn in _MUTATIONS:
-            c = fn(current, rng)
-            if c == current or not c.strip():
+        triggers = _get_triggers(surrogate, current)
+        text_id = hash(current)
+
+        applied = False
+        for trig in triggers:
+            fname = trig["feature"]
+            if fname not in _FEATURE_MUTATIONS:
                 continue
-            cp = surrogate.prob(c)
-            if cp < bp:
-                bp, best, bn = cp, c, name
+            for mut_name, mut_fn in _FEATURE_MUTATIONS[fname]:
+                pair_key = (mut_name, text_id)
+                if pair_key in failed_pairs:
+                    continue
 
-        if best == current:
-            for v in humanize_variants(current):
-                vp = surrogate.prob(v)
-                if vp < bp:
-                    bp, best, bn = vp, v, "Humanize variant"
+                candidate = mut_fn(current)
+                if candidate == current or not candidate.strip():
+                    failed_pairs.add(pair_key)
+                    continue
 
-        delta = current_prob - bp
-        arrow = _c(_GREEN, "\u2193") if delta > 0.01 else _c(_YELLOW, "\u2192")
-        print(f"  {it+1:>3d}.  {bn:28s}  {arrow}  {bp:.4f}  ({delta:+.4f})")
+                new_prob = surrogate.prob(candidate)
+                delta = current_prob - new_prob
 
-        if best == current:
-            print(f"\n  {_c(_DIM, 'No further improvement found.')}")
+                if delta < 0.001:
+                    failed_pairs.add(pair_key)
+                    continue
+
+                arrow = _c(_GREEN, "\u2193") if delta > 0.01 else _c(_YELLOW, "\u2192")
+                print(f"  {it+1:>3d}.  {mut_name:28s}  {arrow}  {new_prob:.4f}  ({delta:+.4f})")
+
+                current = candidate
+                current_prob = new_prob
+                applied = True
+                break
+            if applied:
+                break
+
+        if not applied:
+            print(f"\n  {_c(_DIM, 'No further targeted mutations available.')}")
             break
-        current, current_prob = best, bp
 
     cls = surrogate.classify(current)
     passed = current_prob <= target
@@ -474,29 +583,20 @@ def do_rewrite(surrogate: Surrogate, text: Optional[str] = None, target: float =
                 print(f"  {_c(_DIM, d)}")
         print()
 
+    return current
+
 
 # -- interactive shell -------------------------------------------------------
-
-_HELP = f"""
-  {_c(_BOLD, 'Commands')}
-  {_hr()}
-  {_c(_CYAN, 'score')}      Score text against GPTZero (paste or type inline)
-  {_c(_CYAN, 'diagnose')}   Identify what triggers AI detection and how to fix it
-  {_c(_CYAN, 'rewrite')}    Auto-rewrite text to evade detection
-  {_c(_CYAN, 'target')}     Set rewrite target probability  (current: {{target}})
-  {_c(_CYAN, 'iterations')} Set max rewrite iterations      (current: {{max_iter}})
-  {_c(_CYAN, 'help')}       Show this message
-  {_c(_CYAN, 'quit')}       Exit
-"""
-
 
 def _interactive(surrogate: Surrogate) -> None:
     target = 0.30
     max_iter = 20
+    api_key: Optional[str] = os.environ.get("GPTZERO_API_KEY") or os.environ.get("GPT_ZERO_API_KEY")
+    last_rewrite: Optional[str] = None
 
     print(_c(_DIM, BANNER))
     print(f"  Surrogate model loaded. {_c(_GREEN, 'Ready.')}")
-    print(f"  Type {_c(_CYAN, 'help')} for commands or just start with {_c(_CYAN, 'score')}.\n")
+    print(f"  Type {_c(_CYAN, 'help')} for commands.\n")
 
     while True:
         try:
@@ -515,42 +615,63 @@ def _interactive(surrogate: Surrogate) -> None:
         if cmd in ("q", "quit", "exit"):
             print(f"  {_c(_DIM, 'Goodbye.')}")
             break
+
         elif cmd in ("h", "help", "?"):
-            print(_HELP.replace("{target}", f"{target:.2f}").replace("{max_iter}", str(max_iter)))
+            print(f"""
+  {_c(_BOLD, 'Commands')}
+  {_hr()}
+  {_c(_CYAN, 'score')}  {_c(_DIM, '/ s')}      Score text against surrogate (offline)
+  {_c(_CYAN, 'verify')} {_c(_DIM, '/ v')}      Score against GPTZero's live API + surrogate
+  {_c(_CYAN, 'diagnose')} {_c(_DIM, '/ d')}    Identify detection triggers and how to fix them
+  {_c(_CYAN, 'rewrite')} {_c(_DIM, '/ r')}     Auto-rewrite text to evade detection
+  {_c(_CYAN, 'target')} {_c(_DIM, '/ t')}      Set rewrite target probability  {_c(_DIM, f'(current: {target:.2f})')}
+  {_c(_CYAN, 'iterations')} {_c(_DIM, '/ i')}  Set max rewrite iterations      {_c(_DIM, f'(current: {max_iter})')}
+  {_c(_CYAN, 'help')} {_c(_DIM, '/ h')}        Show this message
+  {_c(_CYAN, 'quit')} {_c(_DIM, '/ q')}        Exit
+""")
+
         elif cmd in ("s", "score"):
             do_score(surrogate, inline)
+
+        elif cmd in ("v", "verify"):
+            api_key = do_verify(surrogate, inline, api_key=api_key)
+
         elif cmd in ("d", "diagnose", "diag"):
             do_diagnose(surrogate, inline)
+
         elif cmd in ("r", "rewrite"):
-            do_rewrite(surrogate, inline, target=target, max_iter=max_iter)
+            result = do_rewrite(surrogate, inline, target=target, max_iter=max_iter)
+            if result:
+                last_rewrite = result
+
         elif cmd in ("t", "target"):
-            if inline:
+            val = inline
+            if not val:
                 try:
-                    target = float(inline)
-                    print(f"  Target set to {_c(_CYAN, f'{target:.2f}')}")
-                except ValueError:
-                    print(f"  {_c(_RED, 'Invalid number.')}")
-            else:
-                try:
-                    val = _prompt("Target probability: ")
-                    target = float(val)
-                    print(f"  Target set to {_c(_CYAN, f'{target:.2f}')}")
-                except (ValueError, EOFError):
-                    print(f"  {_c(_RED, 'Invalid number.')}")
+                    val = input(f"  {_c(_CYAN, '>')} Target probability: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print()
+                    continue
+            try:
+                target = float(val)
+                print(f"  Target set to {_c(_CYAN, f'{target:.2f}')}")
+            except ValueError:
+                print(f"  {_c(_RED, 'Invalid number.')}")
+
         elif cmd in ("i", "iterations", "iter"):
-            if inline:
+            val = inline
+            if not val:
                 try:
-                    max_iter = int(inline)
-                    print(f"  Max iterations set to {_c(_CYAN, str(max_iter))}")
-                except ValueError:
-                    print(f"  {_c(_RED, 'Invalid number.')}")
-            else:
-                try:
-                    val = _prompt("Max iterations: ")
-                    max_iter = int(val)
-                    print(f"  Max iterations set to {_c(_CYAN, str(max_iter))}")
-                except (ValueError, EOFError):
-                    print(f"  {_c(_RED, 'Invalid number.')}")
+                    val = input(f"  {_c(_CYAN, '>')} Max iterations: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print()
+                    continue
+            try:
+                max_iter = int(val)
+                print(f"  Max iterations set to {_c(_CYAN, str(max_iter))}")
+            except ValueError:
+                print(f"  {_c(_RED, 'Invalid number.')}")
+
         else:
             do_score(surrogate, raw)
 
@@ -564,13 +685,14 @@ def main() -> None:
         description="GPTZero evasion tool. Interactive by default.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("mode", nargs="?", choices=["score", "diagnose", "rewrite"],
+    parser.add_argument("mode", nargs="?", choices=["score", "diagnose", "rewrite", "verify"],
                         help="Non-interactive mode (omit for interactive shell)")
-    parser.add_argument("text", nargs="?", help="Input text for non-interactive mode")
+    parser.add_argument("text", nargs="?", help="Input text")
     parser.add_argument("--stdin", action="store_true", help="Read text from stdin")
-    parser.add_argument("--json", action="store_true", help="JSON output (non-interactive only)")
+    parser.add_argument("--json", action="store_true", help="JSON output")
     parser.add_argument("--target", type=float, default=0.30, help="Rewrite target (default: 0.30)")
     parser.add_argument("--max-iterations", type=int, default=20, help="Max rewrite iterations (default: 20)")
+    parser.add_argument("--api-key", help="GPTZero API key (for verify mode)")
     args = parser.parse_args()
 
     surrogate = _ensure_model()
@@ -599,38 +721,44 @@ def main() -> None:
         if mode == "score":
             print(json.dumps({"class": cls, "probability": round(prob, 6), "word_count": len(text.split())}, indent=2))
         elif mode == "diagnose":
-            vec, _ = surrogate.features(text)
-            imps = surrogate.importances()
-            triggers = []
-            for i, name in enumerate(FEATURE_NAMES):
-                if name not in _GUIDANCE:
-                    continue
-                g = _gap(name, vec[i])
-                imp = imps.get(name, 0.0)
-                sc = g * imp
-                if sc > 0.0001:
-                    _, label, suggestion = _GUIDANCE[name]
-                    triggers.append({"feature": name, "label": label, "impact": round(sc, 6), "suggestion": suggestion})
-            triggers.sort(key=lambda t: -t["impact"])
-            print(json.dumps({"class": cls, "probability": round(prob, 6), "triggers": triggers[:10]}, indent=2))
+            triggers = _get_triggers(surrogate, text)
+            print(json.dumps({"class": cls, "probability": round(prob, 6),
+                               "triggers": [{"feature": t["feature"], "label": t["label"],
+                                             "impact": round(t["impact"], 6), "suggestion": t["suggestion"]}
+                                            for t in triggers[:10]]}, indent=2))
         elif mode == "rewrite":
-            rng = random.Random(42)
             current = normalize_text(text)
             cp = surrogate.prob(current)
+            fp: Set[Tuple[str, int]] = set()
             for _ in range(args.max_iterations):
                 if cp <= args.target:
                     break
-                best, bp, bn = current, cp, "none"
-                for n, fn in _MUTATIONS:
-                    c = fn(current, rng)
-                    if c == current:
+                trigs = _get_triggers(surrogate, current)
+                tid = hash(current)
+                did = False
+                for trig in trigs:
+                    fn = trig["feature"]
+                    if fn not in _FEATURE_MUTATIONS:
                         continue
-                    p = surrogate.prob(c)
-                    if p < bp:
-                        bp, best, bn = p, c, n
-                if best == current:
+                    for mn, mf in _FEATURE_MUTATIONS[fn]:
+                        pk = (mn, tid)
+                        if pk in fp:
+                            continue
+                        c = mf(current)
+                        if c == current:
+                            fp.add(pk)
+                            continue
+                        np_ = surrogate.prob(c)
+                        if cp - np_ < 0.001:
+                            fp.add(pk)
+                            continue
+                        current, cp = c, np_
+                        did = True
+                        break
+                    if did:
+                        break
+                if not did:
                     break
-                current, cp = best, bp
             print(json.dumps({
                 "passed": cp <= args.target,
                 "original_prob": round(surrogate.prob(normalize_text(text)), 6),
@@ -638,6 +766,8 @@ def main() -> None:
                 "final_class": surrogate.classify(current),
                 "rewritten_text": current,
             }, indent=2))
+        elif mode == "verify":
+            do_verify(surrogate, text, api_key=args.api_key)
         return
 
     print(_c(_DIM, BANNER))
@@ -647,6 +777,8 @@ def main() -> None:
         do_diagnose(surrogate, text)
     elif mode == "rewrite":
         do_rewrite(surrogate, text, target=args.target, max_iter=args.max_iterations)
+    elif mode == "verify":
+        do_verify(surrogate, text, api_key=args.api_key)
 
 
 if __name__ == "__main__":
