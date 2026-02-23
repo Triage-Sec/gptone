@@ -117,13 +117,13 @@ with modal_app.app.run():
 
 ### Step 3: Evaluate Against GPTZero
 
-Run pattern benchmark. Queries GPTZero for ground truth, compares with surrogate (~15 min):
+Run pattern benchmark. Generates perturbation variants of v5 evaluation texts, queries GPTZero's live API for ground truth probabilities, runs the surrogate on the same texts, and compares. This is the step that produces the benchmark metrics (~15 min, ~840 GPTZero API queries):
 
 ```python
 import modal_app
 
 with modal_app.app.run():
-    modal_app.run_text_benchmark.remote({
+    result = modal_app.run_text_benchmark.remote({
         "model_dir": "/artifacts/gptzero-audit/ppl_surrogate",
         "model_type": "perplexity",
         "dataset_version": "v5",
@@ -133,7 +133,26 @@ with modal_app.app.run():
         "transition_eps": 0.01,
         "seed": 42,
     })
+    import json
+    print(json.dumps(result["summary"]["overall"], indent=2))
+    print(json.dumps(result["gate_check"], indent=2))
 ```
+
+Expected output:
+
+```json
+{
+  "agreement_rate": 0.9964,
+  "probability_mae": 0.003125,
+  "transition_agreement": 0.9806
+}
+{
+  "all_passed": true,
+  "failures": []
+}
+```
+
+The `gate_check` object reports whether all three metrics meet their targets (agreement >= 0.99, MAE <= 0.02, transition >= 0.97). Full per-stratum results are in `result["summary"]["strata"]`.
 
 All Python snippets must be run from the `gptzero-audit/` directory.
 
