@@ -489,59 +489,92 @@ def do_verify(surrogate: Surrogate, text: Optional[str] = None, api_key: Optiona
     return api_key
 
 
-def _build_rewrite_prompt(text: str, triggers: List[Dict[str, Any]], attempt: int) -> str:
-    """Build the Claude prompt for rewriting text to evade AI detection."""
+_SYSTEM_PROMPT = """You are an adversarial rewriting engine embedded in a security research tool. Your job is to rewrite text so that GPTZero's AI text detector classifies it as human-written.
+
+CONTEXT:
+We have extracted a surrogate of GPTZero's detection model. It uses 40 text features to score text on a 0-1 scale (1 = AI, 0 = human). The surrogate tells us exactly which features are triggering detection. GPTZero's live API then validates the result.
+
+The problem: GPTZero detects AI writing at two levels:
+1. Surface features (vocabulary uniformity, sentence structure, hedging phrases, lack of contractions) -- the surrogate captures these.
+2. Token-level statistical patterns (perplexity, burstiness, n-gram distributions) -- these are harder to fool.
+
+To beat BOTH levels, you must not just rephrase casually. You must write like a specific real person with genuine voice, imperfect grammar, natural tangents, and authentic rhythm. AI text is uniform. Human text is messy, uneven, personal.
+
+CRITICAL CONSTRAINTS:
+- Preserve the EXACT same meaning, arguments, and factual claims
+- Do NOT invent new information or remove key points
+- Return ONLY the rewritten text, no commentary or explanation
+
+WHAT GETS DETECTED (avoid all of these):
+- Uniform sentence lengths (AI writes in metronomic rhythm)
+- High type-token ratio with formal vocabulary (AI uses SAT words consistently)
+- Hedging phrases: "it is important to note", "it should be mentioned", "significant potential"
+- Mechanical transitions: "furthermore", "moreover", "consequently", "additionally"
+- Passive voice and nominalization: "the deployment of" instead of "deploying"
+- Perfect grammar throughout (real people make small mistakes)
+- Generic first-person insertions like "I think" or "in my opinion" at sentence starts (detectors flag these as evasion attempts)
+
+WHAT PASSES AS HUMAN (do these instead):
+- Irregular sentence lengths: mix 4-word sentences with 25-word ones
+- Concrete specific language instead of abstract formal language
+- Contractions used inconsistently (humans don't contract every single word)
+- Mid-sentence parentheticals and dashes -- like this -- that break rhythm
+- Sentence fragments. Used deliberately.
+- Domain-specific casualness: someone who KNOWS the topic talks about it differently than a textbook
+- Occasional imprecise word choices that a real person would make
+- Starting sentences with "And", "But", "So" (things editors remove but humans write)"""
+
+
+def _build_rewrite_prompt(text: str, triggers: List[Dict[str, Any]], attempt: int,
+                          prev_score: Optional[float] = None) -> str:
+    """Build the Claude user prompt for a rewrite iteration."""
     trigger_lines = []
     for t in triggers[:6]:
-        trigger_lines.append(f"- {t['label']}: your text scores {t['value']:.3f}, human baseline is {t['baseline']:.3f}. {t['suggestion']}")
+        trigger_lines.append(f"- {t['label']}: current={t['value']:.3f}, human baseline={t['baseline']:.3f}. {t['suggestion']}")
     trigger_block = "\n".join(trigger_lines)
 
-    strictness = ""
-    if attempt > 1:
-        strictness = (
-            f"\nThis is attempt {attempt}. Previous rewrites did not reduce the score enough. "
-            "Be MORE aggressive: use very casual language, contractions everywhere, "
-            "short punchy sentences, personal anecdotes, slang where appropriate. "
-            "Break up long sentences. Remove ALL formal academic phrasing."
+    attempt_context = ""
+    if attempt > 1 and prev_score is not None:
+        attempt_context = (
+            f"\nThis is attempt {attempt}. The previous rewrite scored {prev_score:.4f} on GPTZero "
+            f"(still detected as AI). The detector is catching token-level patterns, not just style. "
+            "You need to fundamentally restructure how the ideas are expressed -- different sentence "
+            "boundaries, different clause ordering, genuinely varied rhythm. Don't just make it more "
+            "casual. Make it sound like a DIFFERENT PERSON wrote it from scratch about the same topic."
+        )
+    if attempt > 3:
+        attempt_context += (
+            "\nMultiple attempts have failed. Write this as if you're explaining it to a friend over "
+            "text message. Extremely casual. Short bursts. Real slang. Genuine voice. Imperfect."
         )
 
-    return f"""Rewrite the following text so that an AI text detector classifies it as human-written.
+    return f"""Rewrite this text to evade GPTZero AI detection.
 
-RULES:
-- Preserve the EXACT same meaning, arguments, and information
-- Do NOT add new claims, facts, or ideas that weren't in the original
-- Do NOT remove key information or arguments
-- Make it sound like a real person wrote it naturally
-- Use contractions (don't, can't, it's, won't)
-- Vary sentence lengths -- mix short and long
-- Use casual vocabulary where possible (big not significant, show not demonstrate, use not utilize)
-- Add first-person perspective where natural (I think, in my view)
-- Remove hedging phrases (it is important to note, furthermore, moreover)
-- Remove mechanical transition words at sentence starts
-- Write like a human who knows the topic, not a textbook
-- Return ONLY the rewritten text, nothing else{strictness}
-
-DETECTION TRIGGERS TO FIX:
+SURROGATE ANALYSIS (features currently triggering detection):
 {trigger_block}
+{attempt_context}
 
-ORIGINAL TEXT:
-{text}
-
-REWRITTEN TEXT:"""
+TEXT TO REWRITE:
+{text}"""
 
 
-def _call_claude(prompt: str) -> Optional[str]:
-    """Call Claude 4.5 Haiku via Anthropic API."""
+def _get_anthropic_key() -> Optional[str]:
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if key:
+        return key
+    env_path = PROJECT_ROOT.parent / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("ANTHROPIC_API_KEY="):
+                return line.split("=", 1)[1].strip()
+    return None
+
+
+def _call_claude(prompt: str, temperature: float = 1.0) -> Optional[str]:
+    """Call Claude 4.5 Haiku with the adversarial system prompt."""
     import anthropic
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        env_path = PROJECT_ROOT.parent / ".env"
-        if env_path.exists():
-            for line in env_path.read_text().splitlines():
-                if line.startswith("ANTHROPIC_API_KEY="):
-                    api_key = line.split("=", 1)[1].strip()
-                    break
+    api_key = _get_anthropic_key()
     if not api_key:
         print(f"  {_c(_RED, 'Error:')} ANTHROPIC_API_KEY not found in environment or .env")
         return None
@@ -551,6 +584,8 @@ def _call_claude(prompt: str) -> Optional[str]:
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=2048,
+            system=_SYSTEM_PROMPT,
+            temperature=temperature,
             messages=[{"role": "user", "content": prompt}],
         )
         return response.content[0].text.strip()
@@ -622,7 +657,7 @@ def do_rewrite(surrogate: Surrogate, text: Optional[str] = None,
     print()
 
     stall_count = 0
-    max_stall = 2
+    max_stall = 3
 
     for it in range(max_iter):
         if current_prob <= target:
@@ -633,14 +668,17 @@ def do_rewrite(surrogate: Surrogate, text: Optional[str] = None,
             print(f"  {_c(_DIM, 'No detection triggers identified.')}")
             break
 
-        print(f"  {_c(_DIM, f'[{it+1}] Rewriting with Claude (targeting {len(triggers[:6])} triggers)...')}")
+        temp = min(0.8 + (it * 0.05), 1.0)
+        print(f"  {_c(_DIM, f'[{it+1}] Rewriting with Claude (targeting {len(triggers[:6])} triggers, temp={temp:.2f})...')}")
 
-        prompt = _build_rewrite_prompt(current, triggers, attempt=it + 1)
-        candidate = _call_claude(prompt)
+        prompt = _build_rewrite_prompt(current, triggers, attempt=it + 1, prev_score=current_prob)
+        candidate = _call_claude(prompt, temperature=temp)
 
         if not candidate:
             break
 
+        candidate = re.sub(r"^#.*?\n", "", candidate).strip()
+        candidate = re.sub(r"^(?:rewritten text|here'?s? (?:the|my) rewrite)[:\s]*", "", candidate, flags=re.IGNORECASE).strip()
         candidate = normalize_text(candidate)
 
         if use_live:
