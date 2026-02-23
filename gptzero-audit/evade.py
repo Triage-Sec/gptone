@@ -582,7 +582,7 @@ def _call_claude(prompt: str, temperature: float = 1.0) -> Optional[str]:
     client = anthropic.Anthropic(api_key=api_key)
     try:
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-sonnet-4-6",
             max_tokens=2048,
             system=_SYSTEM_PROMPT,
             temperature=temperature,
