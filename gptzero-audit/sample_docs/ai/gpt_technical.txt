@@ -1,0 +1,11 @@
+A transformer neural network processes a sentence using a sequence of steps involving attention mechanisms and feedforward layers. 
+
+1. **Input Representation**: The sentence is first tokenized into words or subwords, which are then converted into embeddings—dense vector representations capturing semantic meaning. Positional encodings are added to these embeddings to retain the order of words.
+
+2. **Multi-Head Attention**: The core of the transformer is the multi-head self-attention mechanism. Each word's embedding is transformed into three vectors: queries, keys, and values. Attention scores are calculated by taking the dot product of queries and keys, scaled and passed through a softmax function to produce weights. Each word's representation is then updated by combining the values of all words, weighted by these attention scores. This allows the model to focus on different parts of the sentence.
+
+3. **Feedforward Neural Network**: The output from the attention mechanism is passed through a feedforward neural network (applied independently to each position), which enhances the representation.
+
+4. **Layer Normalization and Residual Connections**: Layer normalization and residual connections are used to stabilize training and help propagate gradients.
+
+5. **Stacking Layers**: This process is repeated across multiple layers, allowing deeper contextual understanding of the sentence, culminating in a final output used for tasks like translation or classification.

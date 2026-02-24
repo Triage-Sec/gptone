@@ -1,0 +1,15 @@
+# Scientists Achieve Major Breakthrough in Fusion Energy Research
+
+LIVERMORE, Calif. — Researchers at Lawrence Livermore National Laboratory announced Tuesday they have achieved a historic milestone in nuclear fusion, producing more energy from a fusion reaction than was directly input into it for the first time.
+
+The breakthrough occurred Dec. 5 when scientists at the National Ignition Facility used 192 powerful lasers to deliver 2.05 megajoules of energy to a tiny pellet of hydrogen fuel, which produced 3.15 megajoules of fusion energy output.
+
+"This is a landmark achievement for the researchers and staff at the National Ignition Facility who have dedicated their careers to seeing fusion ignition become a reality," Energy Secretary Jennifer Granholm said at a news conference.
+
+The experiment represents "ignition" — the point where a fusion reaction produces more energy than was pumped into it. Scientists have pursued this goal for decades as fusion offers the promise of abundant clean energy without the radioactive waste of nuclear fission or carbon emissions of fossil fuels.
+
+However, researchers cautioned that commercial fusion power remains years away. The laser facility required about 300 megajoules of electricity to power the lasers, far more than the fusion output.
+
+"There are very significant hurdles, not just in the science but in technology," said Marvin Adams, deputy administrator for defense programs at the National Nuclear Security Administration.
+
+The research primarily supports the U.S. nuclear weapons program by helping scientists understand fusion reactions without underground testing. But the breakthrough marks a crucial step toward eventual fusion power plants.

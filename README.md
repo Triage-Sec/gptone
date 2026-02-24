@@ -18,30 +18,32 @@ Surrogate evaluated against GPTZero's live API on 840 perturbation-variant texts
 |---|---|---|
 | Class agreement | 0.996 | >= 0.99 |
 | Probability MAE | 0.003 | <= 0.02 |
-| Transition agreement | 0.981 | >= 0.97 |
+| Transition agreement | 0.986 | >= 0.97 |
 
 | Stratum | Agreement | MAE | Transition |
 |---|---|---|---|
-| ai_formal | 0.979 | 0.006 | 0.975 |
-| ai_instructional | 1.000 | 0.001 | 0.992 |
-| boundary_near | 1.000 | 0.006 | 0.950 |
+| ai_formal | 0.979 | 0.007 | 0.975 |
+| ai_instructional | 1.000 | 0.002 | 1.000 |
+| boundary_near | 1.000 | 0.006 | 0.958 |
 | human_conversational | 1.000 | 0.002 | 0.983 |
-| human_pre_llm | 1.000 | 0.001 | 0.983 |
+| human_pre_llm | 1.000 | 0.001 | 1.000 |
 | mixed_blended | 1.000 | 0.002 | 1.000 |
+
+Note: Stability reruns (seeds 42/1337/2026) still show a stratum-level transition gate failure on seed 2026: `ai_formal_transition = 0.9333` (target >= 0.97). See `gptzero-audit/eval_latest_strict.json`.
 
 ### Real-World Validation (320 Diverse Texts)
 
 | Genre | Samples | Class Agreement | MAE |
 |---|---|---|---|
-| AI-generated templates | 10 | 1.000 | 0.032 |
-| Encyclopedic (WikiText-103) | 100 | 0.990 | 0.046 |
-| Movie reviews (IMDB) | 100 | 0.970 | 0.070 |
-| News articles (AG News) | 100 | 0.710 | 0.302 |
+| AI-generated templates | 10 | 0.900 | 0.033 |
+| Encyclopedic (WikiText-103) | 100 | 0.990 | 0.041 |
+| Movie reviews (IMDB) | 100 | 1.000 | 0.081 |
+| News articles (AG News) | 100 | 1.000 | 0.209 |
 | Personal essays | 5 | 0.800 | 0.437 |
-| Technical/developer writing | 5 | 0.400 | 0.390 |
-| **Overall** | **320** | **0.884** | **0.145** |
+| Technical/developer writing | 5 | 0.400 | 0.298 |
+| **Overall** | **320** | **0.981** | **0.115** |
 
-Strong on formal and AI-generated text (97-100%). Degrades on casual, personal, and news writing (40-80%). The 88.4% real-world agreement reflects the distribution gap between synthetic probes and organic text.
+Strong on formal and AI-generated text (99-100%). News improves substantially. Technical/personal remain small-sample and noisy; MAE remains larger than synthetic probe benchmarks due to distribution shift and calibration drift.
 
 ### Evasion Testing
 
@@ -55,7 +57,7 @@ GPTZero's detection is robust at the token probability level. Neither automated 
 
 ## Quick Start
 
-The trained surrogate model ships with the repo via Git LFS at `gptzero-audit/models/ppl_surrogate/ppl_surrogate.pkl` (101 MB). It downloads automatically when you clone.
+The trained surrogate model ships with the repo via Git LFS at `gptzero-audit/models/ppl_surrogate/ppl_surrogate.pkl` (~120 MB). It downloads automatically when you clone.
 
 ```bash
 git clone https://github.com/Triage-Sec/gptone.git
@@ -191,7 +193,7 @@ All Python snippets must be run from the `gptzero-audit/` directory.
 
 ### Pre-Trained Model
 
-The trained surrogate model (101 MB) is included in the repository via Git LFS. It downloads automatically with `git clone`. No Modal access is needed to run inference -- only to reproduce the training pipeline from scratch.
+The trained surrogate model (~120 MB) is included in the repository via Git LFS. It downloads automatically with `git clone`. No Modal access is needed to run inference -- only to reproduce the training pipeline from scratch.
 
 #### Running the model directly
 
@@ -321,33 +323,36 @@ Non-interactive: `python evade.py score "text" --json` or `echo "text" | python 
 
 ```
 gptzero-audit/
-  evade.py                         # Analysis tool (score, diagnose, verify)
-  main.py                          # Original sklearn extraction pipeline
-  modal_app.py                     # Modal entrypoints (train, benchmark, verify, download)
-  predict.py                       # Standalone prediction interface
+  evade.py                         # Interactive CLI (score, diagnose, verify)
+  main.py                          # Original extraction pipeline (historical)
+  modal_app.py                     # Modal entrypoints (corpus, train, benchmark, generalize)
   requirements.lock                # Pinned dependencies for Modal
+  models/ppl_surrogate/
+    ppl_surrogate.pkl              # Trained surrogate (GBM regressor + classifier, ~120 MB, LFS)
   src/
     client.py                      # GPTZero API client with retry logic
     features.py                    # 40 text feature extractors
     attacks.py                     # Probe generation (gradient, boundary, HMM, etc.)
     pattern_benchmark.py           # Perturbation variant generation and evaluation
-    perplexity_surrogate.py        # GBM surrogate (text features + optional GPT-2 perplexity)
-    neural_surrogate.py            # DistilBERT surrogate (experimental)
+    perplexity_surrogate.py        # GBM surrogate training (text features)
     verification.py                # Reproducibility and gate verification
     corpus_strata.py               # Stratum classification for balanced evaluation
     boundary_mining.py             # Directional text perturbations
   scripts/
+    generate_diverse_ai_corpus.py  # Diverse corpus generation + retraining pipeline
+    generalization_sprint.py       # Targeted domain generalization pipeline
     real_world_validation.py       # Surrogate vs GPTZero on diverse real-world text
-    human_evasion_demo.py          # Human-guided evasion test against live API
-    build_corpus_v6.py             # Diverse corpus assembly from HuggingFace datasets
+    run_neural_pattern_benchmark.py # Pattern benchmark runner
+    build_corpus_v6.py             # Corpus assembly from HuggingFace datasets
     build_diverse_training_set.py  # Multi-seed variant generation with cache merge
-    run_neural_pattern_benchmark.py # Pattern benchmark for standalone surrogates
+    human_evasion_demo.py          # Human-guided evasion test against live API
     measure_noise_floor.py         # API determinism measurement
     verify_run.py                  # Reproducibility verification CLI
   configs/
-    neural_surrogate_train.json    # Training configuration
     neural_pattern_benchmark.json  # Benchmark configuration
   datasets/v1 through v5/         # Versioned benchmark datasets with manifests
+  eval_*.json                      # Evaluation results (benchmark, real-world, engineer comparison)
+  sample_docs/                     # Ground-truth test documents by category
   tests/test_*.py                  # Unit tests
 ```
 
@@ -368,8 +373,8 @@ python -m unittest discover -s tests -p 'test_*.py'
 | N2 | DistilBERT (v5+v6) | 0.882 | 0.031 | 0.150 | Low transition generalization |
 | P1 | GPT-2 perplexity only | 0.830 | 0.122 | 0.164 | Perplexity insufficient alone |
 | P2 | GPT-2 ppl + text features | 0.893 | 0.037 | 0.279 | Text features dominate |
-| **F1** | **Text-only GBM + class predictor** | **0.996** | **0.003** | **0.981** | **All gates passed** |
-| V1 | Surrogate vs 320 real-world texts | 0.884 | 0.145 | -- | 97-100% on formal, 40-80% on casual |
+| **F1** | **Text-only GBM + class predictor** | **0.996** | **0.003** | **0.986** | **Seed42 passed; seed2026 fails `ai_formal_transition=0.9333`** |
+| V1 | Surrogate vs 320 real-world texts | 0.981 | 0.115 | -- | Strong on formal/news; weak on small-sample technical/personal |
 | E1 | LLM rewrite (Haiku 4.5) | -- | -- | -- | All scored 1.0; evasion failed |
 | E2 | LLM rewrite (Sonnet 4.6) | -- | -- | -- | All scored 1.0; evasion failed |
 | E3 | Human-edited AI text | -- | -- | -- | 1/10 evaded; 9/10 caught |

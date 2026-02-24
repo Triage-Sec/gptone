@@ -442,6 +442,8 @@ corpus_image = (
         "scipy>=1.17.0",
         "datasets>=3.3.0",
         "joblib>=1.5.0",
+        "anthropic>=0.40.0",
+        "openai>=1.50.0",
     )
     .add_local_dir(".", remote_path=REMOTE_PROJECT_DIR)
 )
@@ -640,6 +642,89 @@ def build_diverse_training(config: Dict[str, object]) -> Dict[str, object]:
 @app.function(
     image=corpus_image,
     volumes={"/artifacts": artifacts_volume},
+    timeout=4 * 60 * 60,
+    secrets=[modal.Secret.from_name("gptzero-audit-secrets")],
+)
+def retrain_diverse(config: Dict[str, object]) -> Dict[str, object]:
+    """Generate diverse AI corpus with Claude, label with GPTZero, retrain surrogate."""
+    import os
+    import sys
+
+    if REMOTE_PROJECT_DIR not in sys.path:
+        sys.path.insert(0, REMOTE_PROJECT_DIR)
+
+    api_key = os.environ.get("GPTZERO_API_KEY") or os.environ.get("GPT_ZERO_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing GPTZERO_API_KEY")
+
+    os.environ.setdefault("ANTHROPIC_API_KEY", str(config.get("anthropic_key", "")))
+    os.environ.setdefault("OPENAI_API_KEY", str(config.get("openai_key", "")))
+
+    from scripts.generate_diverse_ai_corpus import generate_and_retrain
+
+    return generate_and_retrain(
+        gptzero_api_key=api_key,
+        output_dir=str(config.get("output_dir", DEFAULT_OUTPUT_DIR)),
+        target_count=int(config.get("target_count", 500)),
+        delay=float(config.get("delay", 0.3)),
+        seed=int(config.get("seed", 42)),
+        gen_workers=int(config.get("gen_workers", 24)),
+        label_workers=int(config.get("label_workers", 32)),
+        checkpoint_every=int(config.get("checkpoint_every", 25)),
+        generation_attempts=int(config.get("generation_attempts", 4)),
+        label_attempts=int(config.get("label_attempts", 3)),
+    )
+
+
+@app.function(
+    image=corpus_image,
+    volumes={"/artifacts": artifacts_volume},
+    timeout=4 * 60 * 60,
+    secrets=[modal.Secret.from_name("gptzero-audit-secrets")],
+)
+def generalization_sprint(config: Dict[str, object]) -> Dict[str, object]:
+    """Run targeted generalization sprint on weak real-world strata."""
+    import os
+    import sys
+
+    if REMOTE_PROJECT_DIR not in sys.path:
+        sys.path.insert(0, REMOTE_PROJECT_DIR)
+
+    api_key = os.environ.get("GPTZERO_API_KEY") or os.environ.get("GPT_ZERO_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing GPTZERO_API_KEY")
+
+    os.environ.setdefault("ANTHROPIC_API_KEY", str(config.get("anthropic_key", "")))
+    os.environ.setdefault("OPENAI_API_KEY", str(config.get("openai_key", "")))
+
+    from scripts.generalization_sprint import run
+
+    return run(
+        gptzero_api_key=api_key,
+        output_dir=str(config.get("output_dir", DEFAULT_OUTPUT_DIR)),
+        seed=int(config.get("seed", 42)),
+        news_target=int(config.get("news_target", 600)),
+        review_target=int(config.get("review_target", 300)),
+        llm_target=int(config.get("llm_target", 800)),
+        gen_workers=int(config.get("gen_workers", 48)),
+        label_workers=int(config.get("label_workers", 48)),
+        checkpoint_every=int(config.get("checkpoint_every", 25)),
+        delay=float(config.get("delay", 0.1)),
+        generation_attempts=int(config.get("generation_attempts", 4)),
+        label_attempts=int(config.get("label_attempts", 4)),
+        holdout_ratio=float(config.get("holdout_ratio", 0.2)),
+        reg_estimators=int(config.get("reg_estimators", 3400)),
+        cls_estimators=int(config.get("cls_estimators", 1200)),
+        reg_max_depth=int(config.get("reg_max_depth", 10)),
+        cls_max_depth=int(config.get("cls_max_depth", 6)),
+        reg_learning_rate=float(config.get("reg_learning_rate", 0.01)),
+        cls_learning_rate=float(config.get("cls_learning_rate", 0.045)),
+    )
+
+
+@app.function(
+    image=corpus_image,
+    volumes={"/artifacts": artifacts_volume},
     timeout=2 * 60 * 60,
     secrets=[modal.Secret.from_name("gptzero-audit-secrets")],
 )
@@ -791,6 +876,85 @@ def neural_benchmark(
     cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
     cfg["seed"] = seed
     result = run_neural_pattern_benchmark.remote(cfg)
+    print(json.dumps(result, indent=2))
+
+
+@app.local_entrypoint()
+def retrain(
+    target_count: int = 500,
+    delay: float = 0.25,
+    seed: int = 42,
+    anthropic_key: str = "",
+    openai_key: str = "",
+    gen_workers: int = 24,
+    label_workers: int = 32,
+    checkpoint_every: int = 25,
+    generation_attempts: int = 4,
+    label_attempts: int = 3,
+) -> None:
+    """Generate diverse AI corpus with Claude+GPT-5, label with GPTZero, retrain."""
+    result = retrain_diverse.remote({
+        "output_dir": DEFAULT_OUTPUT_DIR,
+        "target_count": target_count,
+        "delay": delay,
+        "seed": seed,
+        "anthropic_key": anthropic_key,
+        "openai_key": openai_key,
+        "gen_workers": gen_workers,
+        "label_workers": label_workers,
+        "checkpoint_every": checkpoint_every,
+        "generation_attempts": generation_attempts,
+        "label_attempts": label_attempts,
+    })
+    print(json.dumps(result, indent=2))
+
+
+@app.local_entrypoint()
+def generalize(
+    output_dir: str = DEFAULT_OUTPUT_DIR,
+    seed: int = 42,
+    news_target: int = 600,
+    review_target: int = 300,
+    llm_target: int = 800,
+    delay: float = 0.10,
+    gen_workers: int = 48,
+    label_workers: int = 48,
+    checkpoint_every: int = 25,
+    generation_attempts: int = 4,
+    label_attempts: int = 4,
+    holdout_ratio: float = 0.2,
+    reg_estimators: int = 3400,
+    cls_estimators: int = 1200,
+    reg_max_depth: int = 10,
+    cls_max_depth: int = 6,
+    reg_learning_rate: float = 0.01,
+    cls_learning_rate: float = 0.045,
+    anthropic_key: str = "",
+    openai_key: str = "",
+) -> None:
+    """Targeted generalization sprint with frontier generation + disagreement adaptation."""
+    result = generalization_sprint.remote({
+        "output_dir": output_dir,
+        "seed": seed,
+        "news_target": news_target,
+        "review_target": review_target,
+        "llm_target": llm_target,
+        "delay": delay,
+        "gen_workers": gen_workers,
+        "label_workers": label_workers,
+        "checkpoint_every": checkpoint_every,
+        "generation_attempts": generation_attempts,
+        "label_attempts": label_attempts,
+        "holdout_ratio": holdout_ratio,
+        "reg_estimators": reg_estimators,
+        "cls_estimators": cls_estimators,
+        "reg_max_depth": reg_max_depth,
+        "cls_max_depth": cls_max_depth,
+        "reg_learning_rate": reg_learning_rate,
+        "cls_learning_rate": cls_learning_rate,
+        "anthropic_key": anthropic_key,
+        "openai_key": openai_key,
+    })
     print(json.dumps(result, indent=2))
 
 

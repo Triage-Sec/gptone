@@ -1,0 +1,21 @@
+# Python asyncio Event Loop Documentation
+
+The asyncio event loop is the core component that manages and executes asynchronous operations in Python. It handles scheduling coroutines, managing I/O operations, and coordinating concurrent tasks.
+
+## Getting Started
+
+To use asyncio, import the module and define coroutines using async def. The simplest way to run async code is with asyncio.run(), which automatically creates and manages an event loop: asyncio.run(main_coroutine()).
+
+For more control, manually manage the loop using asyncio.get_event_loop() or asyncio.new_event_loop(). Run coroutines with loop.run_until_complete(coroutine) and close with loop.close().
+
+## Common Operations
+
+Create concurrent tasks using asyncio.create_task(coroutine) or loop.create_task(). Wait for multiple operations with asyncio.gather(*tasks) or asyncio.wait(tasks). Use asyncio.sleep(seconds) for non-blocking delays.
+
+Handle I/O operations with async context managers or asyncio-compatible libraries. Schedule callbacks with loop.call_soon() or loop.call_later().
+
+## Best Practices
+
+Always use asyncio.run() for simple scripts. Use async with for resource management. Avoid mixing synchronous blocking calls with async code unless using loop.run_in_executor(). Handle exceptions properly with try/except blocks around await statements.
+
+Remember that only one event loop can run per thread, making asyncio ideal for I/O-bound applications requiring high concurrency.

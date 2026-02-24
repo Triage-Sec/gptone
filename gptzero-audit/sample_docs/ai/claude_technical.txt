@@ -1,0 +1,21 @@
+Here's how a transformer processes a sentence step by step:
+
+**1. Tokenization & Embedding**
+The input sentence is split into tokens (words or subwords), then converted into dense vector representations called embeddings that capture semantic meaning.
+
+**2. Positional Encoding**
+Since transformers don't inherently understand word order, positional encodings are added to embeddings to indicate each token's position in the sequence.
+
+**3. Multi-Head Attention**
+The core mechanism where each token "attends to" all other tokens in the sentence. This creates attention weights showing how much each word should focus on every other word, capturing relationships and dependencies regardless of distance.
+
+**4. Feed-Forward Processing**
+After attention, each token passes through feed-forward neural networks that transform the representations, allowing the model to learn complex patterns.
+
+**5. Layer Stacking**
+Steps 3-4 repeat across multiple layers (typically 6-24), with each layer building more sophisticated understanding. Residual connections and layer normalization help training stability.
+
+**6. Output Generation**
+The final layer produces contextualized representations for each token, incorporating information from the entire sentence. For tasks like translation or text generation, additional layers convert these representations into the desired output.
+
+This parallel processing of all tokens simultaneously makes transformers highly efficient and effective at capturing long-range dependencies.

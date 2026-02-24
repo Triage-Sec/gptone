@@ -1,0 +1,11 @@
+**Abstract**
+
+**The Impact of Sleep Deprivation on Decision-Making Performance: A Controlled Laboratory Study**
+
+Sleep deprivation has become increasingly prevalent in modern society, yet its cognitive consequences remain incompletely understood. This study examined the effects of acute sleep deprivation on decision-making processes in healthy adults. Sixty participants (ages 18-35, M=24.3 years) were randomly assigned to either a sleep-deprived condition (awake for 24 hours) or a control condition (normal 8-hour sleep). Decision-making was assessed using the Iowa Gambling Task, probabilistic reasoning problems, and risk assessment scenarios. Participants also completed attention and working memory measures to control for general cognitive impairment.
+
+Results demonstrated significant deterioration in decision-making quality among sleep-deprived participants. Compared to controls, the sleep-deprived group showed increased preference for high-risk, high-reward options (p<0.01), reduced consideration of long-term consequences (p<0.05), and impaired ability to adapt strategies based on feedback (p<0.01). These effects remained significant after controlling for attention and working memory performance, suggesting sleep deprivation specifically compromises decision-making processes beyond general cognitive decline.
+
+These findings have important implications for occupational safety, healthcare, and policy decisions involving sleep-deprived individuals. Future research should investigate the neural mechanisms underlying these effects and potential interventions to mitigate decision-making impairments in sleep-deprived populations.
+
+**Keywords:** sleep deprivation, decision-making, risk assessment, cognitive performance, Iowa Gambling Task

@@ -1,0 +1,39 @@
+{
+  "total_samples": 320,
+  "valid_responses": 320,
+  "overall_class_agreement": 0.9812,
+  "overall_mae": 0.1146,
+  "by_genre": {
+    "ai_generated": {
+      "count": 10,
+      "class_agreement": 0.9,
+      "mae": 0.0334
+    },
+    "encyclopedic": {
+      "count": 100,
+      "class_agreement": 0.99,
+      "mae": 0.0414
+    },
+    "news": {
+      "count": 100,
+      "class_agreement": 1.0,
+      "mae": 0.2089
+    },
+    "personal_essay": {
+      "count": 5,
+      "class_agreement": 0.8,
+      "mae": 0.3379
+    },
+    "review": {
+      "count": 100,
+      "class_agreement": 1.0,
+      "mae": 0.0814
+    },
+    "technical_casual": {
+      "count": 5,
+      "class_agreement": 0.4,
+      "mae": 0.2984
+    }
+  },
+  "timestamp": "2026-02-24T07:06:48Z"
+}

@@ -1,0 +1,231 @@
+{
+  "created_at_utc": "2026-02-24T07:00:24Z",
+  "model_type": "neural_surrogate",
+  "model_dir": "/artifacts/gptzero-audit/ppl_surrogate",
+  "dataset_version": "v5",
+  "seed": 1337,
+  "config": {
+    "max_base_per_stratum": 20,
+    "variants_per_base": 6,
+    "boundary_focus": false
+  },
+  "summary": {
+    "overall": {
+      "agreement_rate": 0.9928571428571429,
+      "probability_mae": 0.004804873487346372,
+      "transition_agreement": 0.9875,
+      "probability_js_divergence": 0.0015316916484065285,
+      "sample_count": 840.0
+    },
+    "strata": {
+      "ai_formal": {
+        "agreement_rate": 0.9785714285714285,
+        "probability_mae": 0.008220520649960355,
+        "transition_agreement": 0.9916666666666667,
+        "probability_js_divergence": 0.013888899603554241,
+        "sample_count": 140.0
+      },
+      "ai_instructional": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.0017877606375453358,
+        "transition_agreement": 1.0,
+        "probability_js_divergence": 0.008896118379596234,
+        "sample_count": 140.0
+      },
+      "boundary_near": {
+        "agreement_rate": 0.9857142857142858,
+        "probability_mae": 0.008882213072796597,
+        "transition_agreement": 0.9583333333333334,
+        "probability_js_divergence": 0.005006918522466379,
+        "sample_count": 140.0
+      },
+      "human_conversational": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.0018982111192465782,
+        "transition_agreement": 0.9916666666666667,
+        "probability_js_divergence": 0.002482997274547646,
+        "sample_count": 140.0
+      },
+      "human_pre_llm": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.004246769601589652,
+        "transition_agreement": 0.9916666666666667,
+        "probability_js_divergence": 0.010868447595673656,
+        "sample_count": 140.0
+      },
+      "mixed_blended": {
+        "agreement_rate": 0.9928571428571429,
+        "probability_mae": 0.003793765842939713,
+        "transition_agreement": 0.9916666666666667,
+        "probability_js_divergence": 0.015466994321021187,
+        "sample_count": 140.0
+      }
+    },
+    "variant_count": 840,
+    "base_sample_count": 120
+  },
+  "stratum_kind_summary": {
+    "ai_formal": {
+      "identity": {
+        "agreement_rate": 0.95,
+        "probability_mae": 0.006082423664184461,
+        "transition_agreement": 0.0,
+        "probability_js_divergence": 0.02157615543388356,
+        "sample_count": 20.0,
+        "transition_sample_count": 0.0
+      },
+      "toward_ai": {
+        "agreement_rate": 0.9534883720930233,
+        "probability_mae": 0.018618359651005237,
+        "transition_agreement": 0.627906976744186,
+        "probability_js_divergence": 0.03400080185390721,
+        "sample_count": 43.0,
+        "transition_sample_count": 43.0
+      },
+      "toward_human": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.0029692851002277314,
+        "transition_agreement": 0.5194805194805194,
+        "probability_js_divergence": 0.010642635716464913,
+        "sample_count": 77.0,
+        "transition_sample_count": 77.0
+      }
+    },
+    "ai_instructional": {
+      "identity": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.0005820785333221778,
+        "transition_agreement": 0.0,
+        "probability_js_divergence": 0.0,
+        "sample_count": 20.0,
+        "transition_sample_count": 0.0
+      },
+      "toward_ai": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.0031686473400770925,
+        "transition_agreement": 0.36585365853658536,
+        "probability_js_divergence": 0.009327081848490997,
+        "sample_count": 41.0,
+        "transition_sample_count": 41.0
+      },
+      "toward_human": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.0013763338942625652,
+        "transition_agreement": 0.379746835443038,
+        "probability_js_divergence": 0.010924635662725855,
+        "sample_count": 79.0,
+        "transition_sample_count": 79.0
+      }
+    },
+    "boundary_near": {
+      "identity": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.02605591894614663,
+        "transition_agreement": 0.0,
+        "probability_js_divergence": 0.019845618707834738,
+        "sample_count": 20.0,
+        "transition_sample_count": 0.0
+      },
+      "toward_ai": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.002505938122454299,
+        "transition_agreement": 0.3333333333333333,
+        "probability_js_divergence": 0.0,
+        "sample_count": 42.0,
+        "transition_sample_count": 42.0
+      },
+      "toward_human": {
+        "agreement_rate": 0.9743589743589743,
+        "probability_mae": 0.007912077565711672,
+        "transition_agreement": 0.28205128205128205,
+        "probability_js_divergence": 0.0044656648240688785,
+        "sample_count": 78.0,
+        "transition_sample_count": 78.0
+      }
+    },
+    "human_conversational": {
+      "identity": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.00035005338765354833,
+        "transition_agreement": 0.0,
+        "probability_js_divergence": 0.0,
+        "sample_count": 20.0,
+        "transition_sample_count": 0.0
+      },
+      "toward_ai": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.0031873202415424076,
+        "transition_agreement": 0.4489795918367347,
+        "probability_js_divergence": 0.007144792519715369,
+        "sample_count": 49.0,
+        "transition_sample_count": 49.0
+      },
+      "toward_human": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.001444645029660169,
+        "transition_agreement": 0.28169014084507044,
+        "probability_js_divergence": 0.0,
+        "sample_count": 71.0,
+        "transition_sample_count": 71.0
+      }
+    },
+    "human_pre_llm": {
+      "identity": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.004373127369500383,
+        "transition_agreement": 0.0,
+        "probability_js_divergence": 0.03465735902799726,
+        "sample_count": 20.0,
+        "transition_sample_count": 0.0
+      },
+      "toward_ai": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.003539659545066217,
+        "transition_agreement": 0.5454545454545454,
+        "probability_js_divergence": 0.02477408078901455,
+        "sample_count": 44.0,
+        "transition_sample_count": 44.0
+      },
+      "toward_human": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.0046228970638109235,
+        "transition_agreement": 0.4342105263157895,
+        "probability_js_divergence": 0.011355871280991348,
+        "sample_count": 76.0,
+        "transition_sample_count": 76.0
+      }
+    },
+    "mixed_blended": {
+      "identity": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.0009203258793102371,
+        "transition_agreement": 0.0,
+        "probability_js_divergence": 0.0,
+        "sample_count": 20.0,
+        "transition_sample_count": 0.0
+      },
+      "toward_ai": {
+        "agreement_rate": 0.9782608695652174,
+        "probability_mae": 0.008041537096830585,
+        "transition_agreement": 0.32608695652173914,
+        "probability_js_divergence": 0.04712444548224608,
+        "sample_count": 46.0,
+        "transition_sample_count": 46.0
+      },
+      "toward_human": {
+        "agreement_rate": 1.0,
+        "probability_mae": 0.0019298647833938941,
+        "transition_agreement": 0.33783783783783783,
+        "probability_js_divergence": 0.0,
+        "sample_count": 74.0,
+        "transition_sample_count": 74.0
+      }
+    }
+  },
+  "gate_check": {
+    "all_passed": true,
+    "failures": []
+  },
+  "row_count": 840,
+  "api_queries": 0
+}

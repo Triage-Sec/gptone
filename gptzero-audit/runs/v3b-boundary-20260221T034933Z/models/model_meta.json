@@ -1,5 +1,0 @@
-{
-  "classifier": {
-    "model_type": "LogisticRegression",
-    "cv_balanced_accuracy": 0.41673202614379085,
-    "cv_folds": 

@@ -1,0 +1,90 @@
+{
+  "full71": {
+    "n": 71,
+    "gpt_acc": 0.9577464788732394,
+    "sur_acc": 0.9577464788732394,
+    "agreement": 1.0,
+    "mae": 0.004219867214875679,
+    "by_category": {
+      "adversarial_ai": {
+        "n": 8,
+        "gpt_acc": 1.0,
+        "sur_acc": 1.0,
+        "agreement": 1.0,
+        "mae": 0.0
+      },
+      "adversarial_human": {
+        "n": 3,
+        "gpt_acc": 1.0,
+        "sur_acc": 1.0,
+        "agreement": 1.0,
+        "mae": 0.002616554679951533
+      },
+      "ai": {
+        "n": 33,
+        "gpt_acc": 1.0,
+        "sur_acc": 1.0,
+        "agreement": 1.0,
+        "mae": 0.0005114604861242946
+      },
+      "human": {
+        "n": 15,
+        "gpt_acc": 1.0,
+        "sur_acc": 1.0,
+        "agreement": 1.0,
+        "mae": 0.005539309194074013
+      },
+      "mixed": {
+        "n": 12,
+        "gpt_acc": 0.75,
+        "sur_acc": 0.75,
+        "agreement": 1.0,
+        "mae": 0.015982756188592222
+      }
+    }
+  },
+  "match65": {
+    "n": 65,
+    "gpt_acc": 0.9846153846153847,
+    "sur_acc": 0.9846153846153847,
+    "agreement": 1.0,
+    "mae": 0.0031575253308048184,
+    "by_category": {
+      "adversarial_ai": {
+        "n": 8,
+        "gpt_acc": 1.0,
+        "sur_acc": 1.0,
+        "agreement": 1.0,
+        "mae": 0.0
+      },
+      "adversarial_human": {
+        "n": 3,
+        "gpt_acc": 1.0,
+        "sur_acc": 1.0,
+        "agreement": 1.0,
+        "mae": 0.002616554679951533
+      },
+      "ai": {
+        "n": 33,
+        "gpt_acc": 1.0,
+        "sur_acc": 1.0,
+        "agreement": 1.0,
+        "mae": 0.0005114604861242946
+      },
+      "human": {
+        "n": 15,
+        "gpt_acc": 1.0,
+        "sur_acc": 1.0,
+        "agreement": 1.0,
+        "mae": 0.005539309194074013
+      },
+      "mixed": {
+        "n": 6,
+        "gpt_acc": 0.8333333333333334,
+        "sur_acc": 0.8333333333333334,
+        "agreement": 1.0,
+        "mae": 0.01623694141820778
+      }
+    }
+  }
+}
