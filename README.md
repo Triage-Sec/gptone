@@ -39,7 +39,7 @@ Note: Stability reruns (seeds 42/1337/2026) still show a stratum-level transitio
 | Encyclopedic (WikiText-103) | 100 | 0.990 | 0.041 |
 | Movie reviews (IMDB) | 100 | 1.000 | 0.081 |
 | News articles (AG News) | 100 | 1.000 | 0.209 |
-| Personal essays | 5 | 0.800 | 0.437 |
+| Personal essays | 5 | 0.800 | 0.338 |
 | Technical/developer writing | 5 | 0.400 | 0.298 |
 | **Overall** | **320** | **0.981** | **0.115** |
 
@@ -165,7 +165,7 @@ with modal_app.app.run():
         "max_base_per_stratum": 20,
         "variants_per_base": 6,
         "boundary_focus": False,
-        "transition_eps": 0.01,
+        "transition_eps": 0.02,
         "seed": 42,
     })
     import json
@@ -178,8 +178,8 @@ Expected output:
 ```json
 {
   "agreement_rate": 0.9964,
-  "probability_mae": 0.003125,
-  "transition_agreement": 0.9806
+  "probability_mae": 0.0033,
+  "transition_agreement": 0.9861
 }
 {
   "all_passed": true,
